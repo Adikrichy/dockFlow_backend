@@ -2,13 +2,13 @@ package org.aldousdev.dockflowbackend.service;
 
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
-import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
 
 import java.util.List;
 
 public interface CompanyService {
-    CompanyResponse create(CompanyRequest companyRequest);
+    CreateCompanyResponse create(CompanyRequest companyRequest);
     List<CompanyResponse> getUserCompanies();
-    CompanyResponse updateCompany(Long id,CompanyRequest companyRequest);
+    CompanyResponse updateCompany(CompanyRequest companyRequest, String token);
     void deleteCompany(Long id);
 }

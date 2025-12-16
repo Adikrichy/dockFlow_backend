@@ -3,18 +3,26 @@ package org.aldousdev.dockflowbackend.service.impls;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.enums.CompanyRole;
+import org.aldousdev.dockflowbackend.auth.enums.UserType;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
 import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
+import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
+import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.mapper.CompanyMapper;
 import org.aldousdev.dockflowbackend.service.CompanyService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -24,12 +32,15 @@ public class CompanyServiceImpl implements CompanyService {
     private final CompanyMapper companyMapper;
     private final AuthServiceImpl authService;
     private final MembershipRepository membershipRepository;
+    private final UserRepository userRepository;
+    private final JWTService jwtService;
 
     @Override
-    public CompanyResponse create(CompanyRequest request){
+    public CreateCompanyResponse create(CompanyRequest request){
         User currentUser = authService.getCurrentUser();
 
         Company company = companyMapper.toEntity(request);
+        company.setCreatedAt(LocalDateTime.now());
         company = companyRepository.save(company);
 
         Membership membership = new Membership();
@@ -38,7 +49,24 @@ public class CompanyServiceImpl implements CompanyService {
         membership.setCompanyRole(CompanyRole.CEO);
         membershipRepository.save(membership);
 
-        return companyMapper.toDto(company);
+        currentUser.setUserType(UserType.COMPANY_OWNER);
+        userRepository.save(currentUser);
+
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("sub", currentUser.getEmail());
+        claims.put("userId", currentUser.getId());
+        claims.put("userType", currentUser.getUserType().name());
+        claims.put("companyId", company.getId());
+        claims.put("companyRole", membership.getCompanyRole().name());
+
+        String jwt = jwtService.generateToken(currentUser,claims);
+
+        CompanyResponse companyResponse = companyMapper.toDto(company);
+        CreateCompanyResponse response = new CreateCompanyResponse();
+        response.setCompany(companyResponse);
+        response.setJwt(jwt);
+
+        return response;
 
     }
 
@@ -54,16 +82,29 @@ public class CompanyServiceImpl implements CompanyService {
 
     @Override
     @Transactional
-    public CompanyResponse updateCompany(Long id, CompanyRequest request){
-        User currentUser = authService.getCurrentUser();
-
-        Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
-                .orElseThrow(() -> new RuntimeException("No access to this company"));
-        if(membership.getCompanyRole() != CompanyRole.CEO){
-            throw new RuntimeException("Only Ceo can update this company");
+    public CompanyResponse updateCompany(CompanyRequest request, String token){
+        if(token == null || !jwtService.isTokenValid(token)){
+            throw new RuntimeException("Invalid token");
         }
 
-        Company company = membership.getCompany();
+        String role = jwtService.extractCompanyRole(token);
+        if(!"CEO".equals(role) && !"DIRECTOR".equals(role)){
+            throw new RuntimeException("Access denied: only CEO or Director can update company");
+        }
+
+        Long companyId = jwtService.extractCompanyId(token);
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(()-> new RuntimeException("Company not found"));
+
+        User currentUser = authService.getCurrentUser();
+
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("No access to this company"));
+        if(membership.getCompanyRole() != CompanyRole.CEO && membership.getCompanyRole() != CompanyRole.DIRECTOR){
+            throw new RuntimeException("Only Ceo and Director can update this company");
+        }
+
+
         companyMapper.updateCompany(request, company);
 
         return companyMapper.toDto(company);
