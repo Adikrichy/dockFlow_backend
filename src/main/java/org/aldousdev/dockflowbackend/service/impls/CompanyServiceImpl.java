@@ -1,5 +1,8 @@
 package org.aldousdev.dockflowbackend.service.impls;
 
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
@@ -56,10 +59,9 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("sub", currentUser.getEmail());
         claims.put("userId", currentUser.getId());
         claims.put("userType", currentUser.getUserType().name());
-        claims.put("companyId", company.getId());
         claims.put("companyRole", membership.getCompanyRole().name());
 
-        String jwt = jwtService.generateToken(currentUser,claims);
+        String jwt = jwtService.generateCompanyToken(currentUser,claims);
 
         CompanyResponse companyResponse = companyMapper.toDto(company);
         CreateCompanyResponse response = new CreateCompanyResponse();
@@ -82,7 +84,7 @@ public class CompanyServiceImpl implements CompanyService {
 
     @Override
     @Transactional
-    public CompanyResponse updateCompany(CompanyRequest request, String token){
+    public CompanyResponse updateCompany(Long id,CompanyRequest request, String token){
         if(token == null || !jwtService.isTokenValid(token)){
             throw new RuntimeException("Invalid token");
         }
@@ -92,13 +94,13 @@ public class CompanyServiceImpl implements CompanyService {
             throw new RuntimeException("Access denied: only CEO or Director can update company");
         }
 
-        Long companyId = jwtService.extractCompanyId(token);
-        Company company = companyRepository.findById(companyId)
+
+        Company company = companyRepository.findById(id)
                 .orElseThrow(()-> new RuntimeException("Company not found"));
 
         User currentUser = authService.getCurrentUser();
 
-        Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId, currentUser.getId())
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("No access to this company"));
         if(membership.getCompanyRole() != CompanyRole.CEO && membership.getCompanyRole() != CompanyRole.DIRECTOR){
             throw new RuntimeException("Only Ceo and Director can update this company");
@@ -122,4 +124,29 @@ public class CompanyServiceImpl implements CompanyService {
 
         companyRepository.deleteById(companyId);
     }
+
+    @Override
+    public String enterCompany(Long id){
+        User user = authService.getCurrentUser();
+
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(
+                id,user.getId()).orElseThrow(() -> new RuntimeException("No access to this company"));
+
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("sub", user.getEmail());
+        claims.put("userId", user.getId());
+        claims.put("userType", user.getUserType().name());
+        claims.put("companyRole", membership.getCompanyRole().name());
+
+
+        return jwtService.generateCompanyToken(
+                 user, claims);
+    }
+
+    @Override
+    public String leaveCompany(){
+        User user = authService.getCurrentUser();
+        return jwtService.generateCompanyToken(user, null);
+    }
+
 }

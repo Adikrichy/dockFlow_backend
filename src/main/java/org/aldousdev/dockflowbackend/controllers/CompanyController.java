@@ -27,16 +27,7 @@ public class CompanyController {
                                                                HttpServletRequest request) {
         CreateCompanyResponse response = companyService.create(companyRequest);
 
-        if(request.getCookies() != null) {
-            for(Cookie cookie : request.getCookies()) {
-                if(cookie.getName().equals("jwt") || cookie.getName().equals("JWT")){
-                    cookie.setValue("null");
-                    cookie.setPath("/");
-                    cookie.setMaxAge(0);
-                    servletResponse.addCookie(cookie);
-                }
-            }
-        }
+        clearAuthCookies(request, servletResponse);
 
         Cookie jwtCookie = new Cookie("jwtWithCompany", response.getJwt());
         jwtCookie.setHttpOnly(true);
@@ -48,8 +39,8 @@ public class CompanyController {
         return ResponseEntity.ok(response);
     }
 
-    @PatchMapping("/update")
-    public ResponseEntity<CompanyResponse> updateCompany(@RequestBody CompanyRequest companyRequest, HttpServletRequest request){
+    @PatchMapping("/{id}")
+    public ResponseEntity<CompanyResponse> updateCompany(@PathVariable Long id,@RequestBody CompanyRequest companyRequest, HttpServletRequest request){
 
         Cookie[] cookies = request.getCookies();
         String token = null;
@@ -64,7 +55,58 @@ public class CompanyController {
 
         }
 
-        CompanyResponse response = companyService.updateCompany(companyRequest,token);
+        CompanyResponse response = companyService.updateCompany(id,companyRequest,token);
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/{companyId}/enter")
+    public ResponseEntity<Void> enterCompany(@PathVariable Long companyId, HttpServletResponse response,HttpServletRequest request){
+        String jwt = companyService.enterCompany(companyId);
+
+        clearAuthCookies(request, response);
+
+        Cookie cookie = new Cookie("jwtWithCompany", jwt);
+        cookie.setHttpOnly(true);
+        cookie.setSecure(true);
+        cookie.setPath("/");
+        cookie.setMaxAge(3600 * 24);
+        response.addCookie(cookie);
+
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/exit")
+    public ResponseEntity<Void> exitCompany(HttpServletResponse response){
+        String jwt = companyService.leaveCompany();
+
+        Cookie cookie = new Cookie("jwtWithCompany", jwt);
+        cookie.setHttpOnly(true);
+        cookie.setSecure(true);
+        cookie.setPath("/");
+        cookie.setMaxAge(0);
+        response.addCookie(cookie);
+
+        return ResponseEntity.ok().build();
+    }
+
+    private void clearAuthCookies(HttpServletRequest request, HttpServletResponse response) {
+        if (request.getCookies() == null) return;
+
+        for (Cookie cookie : request.getCookies()) {
+            if (
+                    "jwt".equals(cookie.getName()) ||
+                            "JWT".equals(cookie.getName()) ||
+                            "jwtWithCompany".equals(cookie.getName())
+            ) {
+                Cookie dead = new Cookie(cookie.getName(), "");
+                dead.setPath("/");
+                dead.setHttpOnly(true);
+                dead.setSecure(true);
+                dead.setMaxAge(0);
+                response.addCookie(dead);
+            }
+        }
+    }
+
+
 }

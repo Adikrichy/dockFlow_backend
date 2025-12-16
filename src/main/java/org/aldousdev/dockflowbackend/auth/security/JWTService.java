@@ -46,7 +46,7 @@ public class JWTService {
                 .compact();
     }
 
-    public String generateToken(User user, Map<String,Object> extraClaims){
+    public String generateCompanyToken(User user, Map<String,Object> extraClaims){
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
@@ -118,8 +118,5 @@ public class JWTService {
         return extractClaim(token, claims -> claims.get("companyRole", String.class));
     }
 
-    public Long extractCompanyId(String token){
-        return extractClaim(token, claims ->((Number) claims.get("companyId")).longValue());
-    }
 }
 
