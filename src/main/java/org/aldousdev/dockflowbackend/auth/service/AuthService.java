@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.service;
+package org.aldousdev.dockflowbackend.auth.service;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.aldousdev.dockflowbackend.auth.dto.request.LoginRequest;

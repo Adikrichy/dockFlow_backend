@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.service;
+package org.aldousdev.dockflowbackend.auth.service;
 
 import org.aldousdev.dockflowbackend.auth.dto.request.RegisterRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.RegisterResponse;

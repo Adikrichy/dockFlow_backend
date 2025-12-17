@@ -1,9 +1,12 @@
-package org.aldousdev.dockflowbackend.service;
+package org.aldousdev.dockflowbackend.auth.service;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
+import org.aldousdev.dockflowbackend.auth.entity.Company;
+import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
+import org.aldousdev.dockflowbackend.auth.entity.User;
 
 import java.util.List;
 
@@ -13,5 +16,7 @@ public interface CompanyService {
     CompanyResponse updateCompany(Long id,CompanyRequest companyRequest, String token);
     String enterCompany(Long id);
     String leaveCompany();
+    CompanyRoleEntity initDefaultRoles(Company company, User currentUser);
+    List<CreateRoleResponse> getAllRoles();
     void deleteCompany(Long id);
 }

@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.service.impls;
+package org.aldousdev.dockflowbackend.auth.service.impls;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,8 +10,8 @@ import org.aldousdev.dockflowbackend.auth.enums.Status;
 import org.aldousdev.dockflowbackend.auth.exceptions.UserNotActiveException;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
-import org.aldousdev.dockflowbackend.mapper.AuthMapper;
-import org.aldousdev.dockflowbackend.service.AuthService;
+import org.aldousdev.dockflowbackend.auth.mapper.AuthMapper;
+import org.aldousdev.dockflowbackend.auth.service.AuthService;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;

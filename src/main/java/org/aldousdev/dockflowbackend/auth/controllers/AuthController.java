@@ -1,10 +1,10 @@
-package org.aldousdev.dockflowbackend.controllers;
+package org.aldousdev.dockflowbackend.auth.controllers;
 
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.LoginRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.LoginResponse;
-import org.aldousdev.dockflowbackend.service.impls.AuthServiceImpl;
+import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;

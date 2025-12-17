@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.service.impls;
+package org.aldousdev.dockflowbackend.auth.service.impls;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;

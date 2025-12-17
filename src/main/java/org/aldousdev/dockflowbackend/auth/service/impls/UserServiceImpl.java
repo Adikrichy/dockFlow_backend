@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.service.impls;
+package org.aldousdev.dockflowbackend.auth.service.impls;
 
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.RegisterRequest;
@@ -8,8 +8,8 @@ import org.aldousdev.dockflowbackend.auth.enums.Status;
 import org.aldousdev.dockflowbackend.auth.enums.UserType;
 import org.aldousdev.dockflowbackend.auth.exceptions.EmailAlreadyExistsException;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
-import org.aldousdev.dockflowbackend.mapper.UserMapper;
-import org.aldousdev.dockflowbackend.service.UserService;
+import org.aldousdev.dockflowbackend.auth.mapper.UserMapper;
+import org.aldousdev.dockflowbackend.auth.service.UserService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

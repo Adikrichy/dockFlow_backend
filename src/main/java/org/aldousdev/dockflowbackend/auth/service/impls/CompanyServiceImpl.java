@@ -1,23 +1,22 @@
-package org.aldousdev.dockflowbackend.service.impls;
+package org.aldousdev.dockflowbackend.auth.service.impls;
 
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
+import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.auth.entity.User;
-import org.aldousdev.dockflowbackend.auth.enums.CompanyRole;
 import org.aldousdev.dockflowbackend.auth.enums.UserType;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
+import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
 import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
-import org.aldousdev.dockflowbackend.mapper.CompanyMapper;
-import org.aldousdev.dockflowbackend.service.CompanyService;
+import org.aldousdev.dockflowbackend.auth.mapper.CompanyMapper;
+import org.aldousdev.dockflowbackend.auth.service.CompanyService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +36,7 @@ public class CompanyServiceImpl implements CompanyService {
     private final MembershipRepository membershipRepository;
     private final UserRepository userRepository;
     private final JWTService jwtService;
+    private final CompanyRoleEntityRepository companyRoleEntityRepository;
 
     @Override
     public CreateCompanyResponse create(CompanyRequest request){
@@ -46,11 +46,26 @@ public class CompanyServiceImpl implements CompanyService {
         company.setCreatedAt(LocalDateTime.now());
         company = companyRepository.save(company);
 
-        Membership membership = new Membership();
-        membership.setCompany(company);
-        membership.setUser(currentUser);
-        membership.setCompanyRole(CompanyRole.CEO);
-        membershipRepository.save(membership);
+        CompanyRoleEntity ceoRole = null;
+
+        if(request.isUseDefaultRoles() ){
+            ceoRole = initDefaultRoles(company, currentUser);
+        }  else{
+             ceoRole = CompanyRoleEntity.builder()
+                     .name("CEO")
+                     .level(100)
+                     .isSystem(true)
+                     .company(company)
+                     .build();
+             companyRoleEntityRepository.save(ceoRole);
+
+             Membership membership = Membership.builder()
+                     .company(company)
+                     .user(currentUser)
+                     .role(ceoRole)
+                     .build();
+             membershipRepository.save(membership);
+        }
 
         currentUser.setUserType(UserType.COMPANY_OWNER);
         userRepository.save(currentUser);
@@ -59,7 +74,7 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("sub", currentUser.getEmail());
         claims.put("userId", currentUser.getId());
         claims.put("userType", currentUser.getUserType().name());
-        claims.put("companyRole", membership.getCompanyRole().name());
+        claims.put("companyRole", ceoRole.getName());
 
         String jwt = jwtService.generateCompanyToken(currentUser,claims);
 
@@ -102,9 +117,15 @@ public class CompanyServiceImpl implements CompanyService {
 
         Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("No access to this company"));
-        if(membership.getCompanyRole() != CompanyRole.CEO && membership.getCompanyRole() != CompanyRole.DIRECTOR){
-            throw new RuntimeException("Only Ceo and Director can update this company");
+
+        String roleName = membership.getRole().getName();
+        if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
+            throw new RuntimeException("Access denied: Only CEO or Director can update company");
         }
+
+//        if(membership.getCompanyRole() != CompanyRole.CEO && membership.getCompanyRole() != CompanyRole.DIRECTOR){
+//            throw new RuntimeException("Only Ceo and Director can update this company");
+//        }
 
 
         companyMapper.updateCompany(request, company);
@@ -115,12 +136,18 @@ public class CompanyServiceImpl implements CompanyService {
     @Override
     public void deleteCompany(Long companyId){
         User currentUser = authService.getCurrentUser();
+
         Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId,currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("No access to this company"));
 
-        if(membership.getCompanyRole() != CompanyRole.CEO){
-            throw new RuntimeException("Only Ceo can delete this company");
+        String roleName = membership.getRole().getName();
+        if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
+            throw new RuntimeException("Access denied: Only CEO or Director can update company");
         }
+
+//        if(membership.getCompanyRole() != CompanyRole.CEO){
+//            throw new RuntimeException("Only Ceo can delete this company");
+//        }
 
         companyRepository.deleteById(companyId);
     }
@@ -136,7 +163,7 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("sub", user.getEmail());
         claims.put("userId", user.getId());
         claims.put("userType", user.getUserType().name());
-        claims.put("companyRole", membership.getCompanyRole().name());
+        claims.put("companyRole", membership.getRole().getName());
 
 
         return jwtService.generateCompanyToken(
@@ -147,6 +174,68 @@ public class CompanyServiceImpl implements CompanyService {
     public String leaveCompany(){
         User user = authService.getCurrentUser();
         return jwtService.generateCompanyToken(user, null);
+    }
+
+    @Override
+    public CompanyRoleEntity initDefaultRoles(Company company, User currentUser){
+        CompanyRoleEntity ceo = CompanyRoleEntity.builder()
+                .name("CEO")
+                .level(100)
+                .isSystem(true)
+                .company(company)
+                .build();
+
+        CompanyRoleEntity director = CompanyRoleEntity.builder()
+                .name("Director")
+                .level(80)
+                .isSystem(true)
+                .company(company)
+                .build();
+
+        CompanyRoleEntity manager = CompanyRoleEntity.builder()
+                .name("Manager")
+                .level(60)
+                .isSystem(true)
+                .company(company)
+                .build();
+
+        CompanyRoleEntity worker = CompanyRoleEntity.builder()
+                .name("Worker")
+                .level(10)
+                .isSystem(true)
+                .company(company)
+                .build();
+
+        companyRoleEntityRepository.saveAll(List.of(ceo, director, manager, worker));
+
+        Membership ceoMembership = Membership.builder()
+                .company(company)
+                .user(currentUser)
+                .role(ceo)
+                .build();
+        membershipRepository.save(ceoMembership);
+
+        return ceo;
+    }
+
+    @Override
+    public List<CreateRoleResponse> getAllRoles(){
+
+        User currentUser = authService.getCurrentUser();
+        Company company = currentUser.getMemberships().stream()
+                .filter(m->"CEO".equals(m.getRole().getName()) || "Director".equals(m.getRole().getName()))
+                .findFirst()
+                .map(Membership::getCompany)
+                .orElseThrow(()-> new RuntimeException("No access to this company"));
+
+        return companyRoleEntityRepository.findByCompanyId(company.getId()).stream()
+                .map(role -> new CreateRoleResponse(
+                        role.getId(),
+                        role.getName(),
+                        role.getLevel(),
+                        role.getIsSystem()
+                ))
+                .collect(Collectors.toList());
     }
 
 }

@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.mapper;
+package org.aldousdev.dockflowbackend.auth.mapper;
 
 import org.aldousdev.dockflowbackend.auth.dto.response.RegisterResponse;
 import org.aldousdev.dockflowbackend.auth.entity.User;

@@ -30,12 +30,16 @@ public class Membership {
     @JoinColumn(name = "company_id", nullable = false)
     private Company company;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private CompanyRole companyRole;
+//    @Enumerated(EnumType.STRING)
+//    @Column(nullable = false)
+//    private CompanyRole companyRole;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime joinDate;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "role_id", nullable = false)
+    private CompanyRoleEntity role;
 
     @PrePersist
     protected void onCreate(){

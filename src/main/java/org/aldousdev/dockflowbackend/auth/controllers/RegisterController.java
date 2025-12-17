@@ -1,4 +1,4 @@
-package org.aldousdev.dockflowbackend.controllers;
+package org.aldousdev.dockflowbackend.auth.controllers;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -7,7 +7,7 @@ import org.aldousdev.dockflowbackend.auth.dto.response.RegisterResponse;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.enums.Status;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
-import org.aldousdev.dockflowbackend.service.impls.UserServiceImpl;
+import org.aldousdev.dockflowbackend.auth.service.impls.UserServiceImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
