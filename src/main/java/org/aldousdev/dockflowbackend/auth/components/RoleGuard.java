@@ -1,5 +1,6 @@
-package org.aldousdev.dockflowbackend.auth.entity;
+package org.aldousdev.dockflowbackend.auth.components;
 
+import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.springframework.stereotype.Component;
 
 @Component("roleGuard")

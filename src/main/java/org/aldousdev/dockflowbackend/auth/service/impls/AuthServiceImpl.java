@@ -65,8 +65,18 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public User getCurrentUser(){
-        String email = SecurityContextHolder.getContext().getAuthentication().getName();
-        return userRepository.findByEmail(email)
-                .orElseThrow(()-> new RuntimeException("User not found"));
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if(authentication == null || !authentication.isAuthenticated()){
+            throw new RuntimeException("Authentication not found");
+        }
+
+        if(authentication.getPrincipal() instanceof User user){
+            return user;
+        }
+
+        throw new RuntimeException("Not correct type of principal");
+//        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+//        return userRepository.findByEmail(email)
+//                .orElseThrow(()-> new RuntimeException("User not found"));
     }
 }

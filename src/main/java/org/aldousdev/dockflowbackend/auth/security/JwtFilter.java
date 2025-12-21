@@ -46,14 +46,19 @@ public class JwtFilter extends OncePerRequestFilter {
          }
 
 
-         if(jwtService.isTokenValid(token)){
+         if( token != null && jwtService.isTokenValid(token)){
              String email = jwtService.extractEmail(token);
 
              if(SecurityContextHolder.getContext().getAuthentication() == null){
                  User user = userRepository.findByEmail(email)
                          .orElse(null);
                  if(user != null && jwtService.isTokenValid(token,user)){
-                     UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(user,null,user.getAuthorities());
+                     JwtAuthenticationToken authentication = new JwtAuthenticationToken(
+                             user,
+                             token,
+                             user.getAuthorities()
+                     );
+//                     UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(user,token,user.getAuthorities());
                      SecurityContextHolder.getContext().setAuthentication(authentication);
                  }
              }

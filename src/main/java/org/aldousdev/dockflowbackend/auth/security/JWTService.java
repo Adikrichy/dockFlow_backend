@@ -118,5 +118,13 @@ public class JWTService {
         return extractClaim(token, claims -> claims.get("companyRole", String.class));
     }
 
+    public Integer extractCompanyRoleLevel(String token){
+        return extractClaim(token, claims -> claims.get("companyRoleLevel", Integer.class));
+    }
+
+    public Long extractCompanyId(String token){
+        return extractClaim(token, claims -> claims.get("companyId", Long.class));
+    }
+
 }
 

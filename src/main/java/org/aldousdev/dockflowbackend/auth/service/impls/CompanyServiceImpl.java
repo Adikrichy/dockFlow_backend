@@ -1,6 +1,7 @@
 package org.aldousdev.dockflowbackend.auth.service.impls;
 
 import lombok.RequiredArgsConstructor;
+import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
@@ -75,6 +76,8 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("userId", currentUser.getId());
         claims.put("userType", currentUser.getUserType().name());
         claims.put("companyRole", ceoRole.getName());
+        claims.put("companyId", company.getId());
+        claims.put("companyRoleLevel", ceoRole.getLevel());
 
         String jwt = jwtService.generateCompanyToken(currentUser,claims);
 
@@ -99,15 +102,16 @@ public class CompanyServiceImpl implements CompanyService {
 
     @Override
     @Transactional
+    @RequiresRoleLevel(value = 80, message = "Only 80 and higher can update")
     public CompanyResponse updateCompany(Long id,CompanyRequest request, String token){
-        if(token == null || !jwtService.isTokenValid(token)){
-            throw new RuntimeException("Invalid token");
-        }
-
-        String role = jwtService.extractCompanyRole(token);
-        if(!"CEO".equals(role) && !"DIRECTOR".equals(role)){
-            throw new RuntimeException("Access denied: only CEO or Director can update company");
-        }
+//        if(token == null || !jwtService.isTokenValid(token)){
+//            throw new RuntimeException("Invalid token");
+//        }
+//
+//        String role = jwtService.extractCompanyRole(token);
+//        if(!"CEO".equals(role) && !"DIRECTOR".equals(role)){
+//            throw new RuntimeException("Access denied: only CEO or Director can update company");
+//        }
 
 
         Company company = companyRepository.findById(id)
@@ -115,13 +119,15 @@ public class CompanyServiceImpl implements CompanyService {
 
         User currentUser = authService.getCurrentUser();
 
-        Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
-                .orElseThrow(() -> new RuntimeException("No access to this company"));
+//        Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
+//                .orElseThrow(() -> new RuntimeException("No access to this company"));
+        membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
+                .orElseThrow(()-> new RuntimeException("No access to this company"));
 
-        String roleName = membership.getRole().getName();
-        if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
-            throw new RuntimeException("Access denied: Only CEO or Director can update company");
-        }
+//        String roleName = membership.getRole().getName();
+//        if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
+//            throw new RuntimeException("Access denied: Only CEO or Director can update company");
+//        }
 
 //        if(membership.getCompanyRole() != CompanyRole.CEO && membership.getCompanyRole() != CompanyRole.DIRECTOR){
 //            throw new RuntimeException("Only Ceo and Director can update this company");
@@ -164,6 +170,9 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("userId", user.getId());
         claims.put("userType", user.getUserType().name());
         claims.put("companyRole", membership.getRole().getName());
+        claims.put("companyId", membership.getCompany().getId());
+        claims.put("companyRoleLevel", membership.getRole().getLevel());
+
 
 
         return jwtService.generateCompanyToken(
