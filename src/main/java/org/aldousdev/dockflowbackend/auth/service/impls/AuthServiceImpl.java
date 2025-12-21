@@ -74,9 +74,10 @@ public class AuthServiceImpl implements AuthService {
             return user;
         }
 
-        throw new RuntimeException("Not correct type of principal");
-//        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        throw new RuntimeException("User is not active");
+
+//        String email = authentication.getName();
 //        return userRepository.findByEmail(email)
-//                .orElseThrow(()-> new RuntimeException("User not found"));
+//                .orElseThrow(()->new RuntimeException("User not found"));
     }
 }

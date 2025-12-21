@@ -1,48 +1,47 @@
 package org.aldousdev.dockflowbackend.auth.components;
 
 import lombok.RequiredArgsConstructor;
-import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
-import org.aldousdev.dockflowbackend.auth.entity.Membership;
-import org.aldousdev.dockflowbackend.auth.entity.User;
-import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
-import org.aldousdev.dockflowbackend.auth.service.AuthService;
-import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
+import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-
 
 @Aspect
 @Component
 @RequiredArgsConstructor
 public class RoleLevelAspect {
+
     private final JWTService jwtService;
 
     @Before("@annotation(requiresRoleLevel)")
     public void checkRoleLevel(RequiresRoleLevel requiresRoleLevel) {
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        if(!(authentication instanceof JwtAuthenticationToken jwtAuth)){
-            throw new SecurityException("Unauthorized");
+        if (!(authentication instanceof JwtAuthenticationToken)) {
+            throw new SecurityException("Unauthorized access or invalid authentication type");
         }
 
-//        String token = (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        JwtAuthenticationToken jwtAuth = (JwtAuthenticationToken) authentication;
         String token = jwtAuth.getToken();
-        if(token == null){
-            throw new SecurityException("Token is null");
+
+        if (token == null) {
+            throw new SecurityException("Authentication token is missing");
         }
 
         Integer roleLevel = jwtService.extractCompanyRoleLevel(token);
 
-        if(roleLevel ==null){
-            throw new SecurityException("Role level is null");
+        if (roleLevel == null) {
+            throw new SecurityException("User is not associated with any company context");
         }
 
-        if(roleLevel < requiresRoleLevel.value()){
-            throw new SecurityException("Role level is lower than role level");
+        if (roleLevel < requiresRoleLevel.value()) {
+            String message = requiresRoleLevel.message().isBlank()
+                    ? "Insufficient permissions: required role level " + requiresRoleLevel.value() + ", current level: " + roleLevel
+                    : requiresRoleLevel.message();
+            throw new SecurityException(message);
         }
-
     }
 }
