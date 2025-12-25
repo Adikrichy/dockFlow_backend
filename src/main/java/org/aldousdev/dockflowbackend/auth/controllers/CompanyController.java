@@ -1,5 +1,12 @@
 package org.aldousdev.dockflowbackend.auth.controllers;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -28,15 +35,27 @@ import java.util.List;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/company")
+@Tag(name = "Company", description = "Управление компаниями и ролями в системе")
 public class CompanyController {
     private final CompanyServiceImpl companyService;
     private final AuthServiceImpl authService;
     private final CompanyRoleEntityRepository companyRoleEntityRepository;
 
     @PostMapping("/create")
-    public ResponseEntity<CreateCompanyResponse> createCompany(@RequestBody CompanyRequest companyRequest,
-                                                               HttpServletResponse servletResponse,
-                                                               HttpServletRequest request) {
+    @Operation(summary = "Создать новую компанию", 
+            description = "Создает новую компанию и делает текущего пользователя CEO. " +
+                    "Обновляет JWT токен с информацией о компании")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Компания успешно создана",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateCompanyResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некорректные данные компании"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация")
+    })
+    public ResponseEntity<CreateCompanyResponse> createCompany(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные компании")
+            @RequestBody CompanyRequest companyRequest,
+            HttpServletResponse servletResponse,
+            HttpServletRequest request) {
         CreateCompanyResponse response = companyService.create(companyRequest);
 
         clearAuthCookies(request, servletResponse);
@@ -52,7 +71,23 @@ public class CompanyController {
     }
 
     @PatchMapping("/{id}")
-    public ResponseEntity<CompanyResponse> updateCompany(@PathVariable Long id,@RequestBody CompanyRequest companyRequest, HttpServletRequest request){
+    @Operation(summary = "Обновить информацию компании", 
+            description = "Обновляет данные компании (название, описание и т.д.). " +
+                    "Доступно только для CEO компании")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Компания успешно обновлена",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = CompanyResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некорректные данные"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "Только CEO может обновлять компанию"),
+            @ApiResponse(responseCode = "404", description = "Компания не найдена")
+    })
+    public ResponseEntity<CompanyResponse> updateCompany(
+            @Parameter(description = "ID компании", required = true)
+            @PathVariable Long id,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Обновленные данные компании")
+            @RequestBody CompanyRequest companyRequest, 
+            HttpServletRequest request){
 
         Cookie[] cookies = request.getCookies();
         String token = null;
@@ -72,7 +107,20 @@ public class CompanyController {
     }
 
     @PostMapping("/{companyId}/enter")
-    public ResponseEntity<Void> enterCompany(@PathVariable Long companyId, HttpServletResponse response,HttpServletRequest request){
+    @Operation(summary = "Войти в компанию", 
+            description = "Переключает контекст пользователя на другую компанию, обновляя JWT токен. " +
+                    "Пользователь должен быть членом этой компании")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Успешно переключились на компанию"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "У вас нет доступа к этой компании"),
+            @ApiResponse(responseCode = "404", description = "Компания не найдена")
+    })
+    public ResponseEntity<Void> enterCompany(
+            @Parameter(description = "ID компании для входа", required = true)
+            @PathVariable Long companyId, 
+            HttpServletResponse response,
+            HttpServletRequest request){
         String jwt = companyService.enterCompany(companyId);
 
         clearAuthCookies(request, response);
@@ -88,6 +136,13 @@ public class CompanyController {
     }
 
     @PostMapping("/exit")
+    @Operation(summary = "Выйти из компании", 
+            description = "Переключает пользователя обратно на режим без компании. " +
+                    "JWT токен обновляется без контекста компании")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Успешно вышли из компании"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация")
+    })
     public ResponseEntity<Void> exitCompany(HttpServletResponse response){
         String jwt = companyService.leaveCompany();
 
@@ -102,7 +157,19 @@ public class CompanyController {
     }
 
     @PostMapping("/roles")
-    public ResponseEntity<CreateRoleResponse> createRole(@RequestBody @Valid CreateRoleRequest request){
+    @Operation(summary = "Создать новую роль в компании", 
+            description = "Создает пользовательскую роль в компании с заданным уровнем прав. " +
+                    "Доступно только для CEO компании")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "201", description = "Роль успешно создана",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateRoleResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некорректные данные роли"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "Только CEO может создавать роли")
+    })
+    public ResponseEntity<CreateRoleResponse> createRole(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные для создания роли")
+            @RequestBody @Valid CreateRoleRequest request){
         User currentUser = authService.getCurrentUser();
         Company company = currentUser.getMemberships().stream()
                 .filter(m -> "CEO".equals(m.getRole().getName()))
@@ -130,6 +197,13 @@ public class CompanyController {
     }
 
     @GetMapping("/getAllRoles")
+    @Operation(summary = "Получить все роли компании", 
+            description = "Возвращает список всех ролей (системных и пользовательских) в компании текущего пользователя")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Список ролей успешно получен",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateRoleResponse.class))),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация")
+    })
     public ResponseEntity<List<CreateRoleResponse>> getAllRoles(){
         List<CreateRoleResponse> roles = companyService.getAllRoles();
         return ResponseEntity.status(HttpStatus.OK).body(roles);

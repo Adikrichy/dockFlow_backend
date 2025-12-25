@@ -34,7 +34,7 @@ public class User implements UserDetails {
     @Column(unique = true, nullable = false)
     private String email;
 
-    @Size(min = 12, message = "Password must be more 12")
+    @Size(min = 12, message = "Password must be at least 12 characters")
     @Column(nullable = false, length = 60)
     private String password;
 

@@ -1,5 +1,12 @@
 package org.aldousdev.dockflowbackend.auth.controllers;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.RegisterRequest;
@@ -15,19 +22,41 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
-
+@Tag(name = "Registration", description = "Регистрация и верификация пользователей")
 public class RegisterController {
 
     private final UserServiceImpl userService;
     private final UserRepository userRepository;
 
     @PostMapping("/register")
-    public ResponseEntity<RegisterResponse> register(@RequestBody @Valid RegisterRequest registerRequest){
+    @Operation(summary = "Регистрация нового пользователя", 
+            description = "Создает новый аккаунт пользователя и отправляет email для верификации. " +
+                    "Пользователь не сможет войти до подтверждения email")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "201", description = "Регистрация успешна",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = RegisterResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Email уже зарегистрирован или данные некорректны")
+    })
+    public ResponseEntity<RegisterResponse> register(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные для регистрации")
+            @RequestBody @Valid RegisterRequest registerRequest){
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.register(registerRequest));
     }
 
     @PostMapping("/auth/verify-email")
-    public ResponseEntity<String> verifyEmail(@RequestParam String email, @RequestParam String verificationCode){
+    @Operation(summary = "Верифицировать email", 
+            description = "Активирует аккаунт пользователя путем подтверждения кода верификации, " +
+                    "отправленного на email. После этого пользователь сможет войти в систему")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Email успешно верифицирован"),
+            @ApiResponse(responseCode = "400", description = "Некорректный код верификации"),
+            @ApiResponse(responseCode = "404", description = "Пользователь не найден")
+    })
+    public ResponseEntity<String> verifyEmail(
+            @Parameter(description = "Email пользователя", required = true)
+            @RequestParam String email, 
+            @Parameter(description = "Код верификации из письма", required = true)
+            @RequestParam String verificationCode){
         User user = userRepository.findByEmail(email)
                 .orElseThrow(()-> new RuntimeException("User with email "+ email + " not found"));
         if(user.getEmailVerificationCode() != null && user.getEmailVerificationCode().equals(verificationCode)){

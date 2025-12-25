@@ -34,7 +34,7 @@ public class SecurityConfig {
                     .authorizeHttpRequests(auth -> auth
                             .requestMatchers("/api/register", "/api/auth/verify-email"
                             ,"/swagger-ui/**", "/v3/api-docs/**", "/api-docs/**",
-                                    "/api/auth/login", "/api/auth/logout").permitAll()
+                                    "/api/auth/login", "/api/auth/logout", "/ws/**").permitAll()
                             .anyRequest().authenticated())
                     .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                     .httpBasic(httpBasic -> httpBasic.disable());

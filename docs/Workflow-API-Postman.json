@@ -1,0 +1,252 @@
+{
+  "info": {
+    "name": "DocFlow Workflow API",
+    "description": "Complete workflow management with XML routing",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Workflow Templates",
+      "item": [
+        {
+          "name": "Create Template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/template",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "template"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Standard Contract Approval\",\n  \"description\": \"Three-level approval workflow for contracts\",\n  \"companyId\": 1,\n  \"workflowXml\": \"<workflow><step order=\\\"1\\\" roleName=\\\"Manager\\\" roleLevel=\\\"60\\\" action=\\\"review\\\"/><step order=\\\"2\\\" roleName=\\\"Director\\\" roleLevel=\\\"80\\\" action=\\\"approve\\\"/><step order=\\\"3\\\" roleName=\\\"CEO\\\" roleLevel=\\\"100\\\" action=\\\"sign\\\"/></workflow>\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Company Templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/company/1/templates",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "company", "1", "templates"]
+            }
+          }
+        },
+        {
+          "name": "Get Template",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/template/1",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "template", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workflow Instances",
+      "item": [
+        {
+          "name": "Start Workflow",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/1/start?documentId=1",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "1", "start"],
+              "query": [
+                {
+                  "key": "documentId",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Workflow Instance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/instance/1",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "instance", "1"]
+            }
+          }
+        },
+        {
+          "name": "Get Document Tasks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/document/1/tasks",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "document", "1", "tasks"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "Get My Pending Tasks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/my-tasks",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "my-tasks"]
+            }
+          }
+        },
+        {
+          "name": "Approve Task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/task/1/approve",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "task", "1", "approve"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"Looks good, approved from my side\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Reject Task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/workflow/task/1/reject",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "workflow", "task", "1", "reject"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"Need more information before approval\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "WebSocket Events",
+      "item": [
+        {
+          "name": "Subscribe to Company Workflow Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "ws://localhost:8080/ws/chat",
+              "protocol": "ws",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["ws", "chat"]
+            },
+            "description": "Connect via WebSocket STOMP, then:\n\nSUBSCRIBE\nid:sub-1\ndestination:/topic/workflow/company/1\n\n\nYou will receive:\n{\n  \"type\": \"WORKFLOW_STARTED\",\n  \"workflowInstanceId\": 1,\n  \"documentId\": 1,\n  \"timestamp\": \"2024-01-15T10:30:00\"\n}\n\n{\n  \"type\": \"TASK_CREATED\",\n  \"taskId\": 1,\n  \"roleName\": \"Manager\",\n  \"timestamp\": \"2024-01-15T10:30:05\"\n}\n\n{\n  \"type\": \"TASK_APPROVED\",\n  \"taskId\": 1,\n  \"approvedBy\": \"manager@company.com\",\n  \"timestamp\": \"2024-01-15T10:35:00\"\n}\n\n{\n  \"type\": \"WORKFLOW_COMPLETED\",\n  \"workflowInstanceId\": 1,\n  \"timestamp\": \"2024-01-15T11:00:00\"\n}"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DockFlow Chat WebSocket Tester</title>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/stomp.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #667eea;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .content {
+            padding: 20px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        textarea {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: inherit;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 60px;
+            flex: 1 1 100%;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            background: #e74c3c;
+        }
+
+        button.danger:hover {
+            background: #c0392b;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .messages {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+            margin-top: 10px;
+        }
+
+        .message {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-size: 13px;
+            word-break: break-word;
+        }
+
+        .message.sent {
+            background: #e3f2fd;
+            border-left: 3px solid #2196F3;
+        }
+
+        .message.received {
+            background: #f1f8e9;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .message.system {
+            background: #fff3e0;
+            border-left: 3px solid #FF9800;
+            font-style: italic;
+        }
+
+        .message.error {
+            background: #ffebee;
+            border-left: 3px solid #f44336;
+            color: #c62828;
+        }
+
+        .timestamp {
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            padding: 5px;
+            background: #e8f4f8;
+            border-radius: 3px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        @media (max-width: 600px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 DockFlow Chat WebSocket Tester</h1>
+            <p style="margin-top: 5px; opacity: 0.9;">Test WebSocket connections and messaging</p>
+        </div>
+
+        <div class="content">
+            <!-- Connection Section -->
+            <div class="section">
+                <h2>📡 Connection</h2>
+                <div id="status" class="status disconnected">❌ Disconnected</div>
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="serverUrl" 
+                        placeholder="Server URL" 
+                        value="ws://localhost:8080/ws/chat"
+                    >
+                    <button id="connectBtn" onclick="connect()">Connect</button>
+                    <button id="disconnectBtn" onclick="disconnect()" disabled class="danger">Disconnect</button>
+                </div>
+                <div class="info">
+                    Enter WebSocket URL and click Connect. Default: ws://localhost:8080/ws/chat
+                </div>
+            </div>
+
+            <!-- Subscription Section -->
+            <div class="section">
+                <h2>📨 Subscribe to Channel</h2>
+                <div class="input-group">
+                    <input 
+                        type="number" 
+                        id="channelIdSub" 
+                        placeholder="Channel ID" 
+                        value="1"
+                        style="flex: 0 1 150px"
+                    >
+                    <button id="subscribeBtn" onclick="subscribe()" disabled>Subscribe to /topic/channel/{id}</button>
+                    <button id="unsubscribeBtn" onclick="unsubscribe()" disabled class="danger">Unsubscribe</button>
+                </div>
+                <div id="subscriptionStatus" class="info" style="display:none;">
+                    Subscribed to: <strong id="subscribedChannel"></strong>
+                </div>
+            </div>
+
+            <!-- Send Message Section -->
+            <div class="section">
+                <h2>💬 Send Message</h2>
+                <div class="input-group">
+                    <input 
+                        type="number" 
+                        id="channelIdSend" 
+                        placeholder="Channel ID" 
+                        value="1"
+                        style="flex: 0 1 150px"
+                    >
+                    <textarea 
+                        id="messageContent" 
+                        placeholder="Message content..."
+                    ></textarea>
+                </div>
+                <button id="sendBtn" onclick="sendMessage()" disabled>Send Message via WebSocket</button>
+                <div class="info" style="margin-top: 10px;">
+                    ✅ Sends to: /app/chat/{channelId}
+                </div>
+            </div>
+
+            <!-- Message History -->
+            <div class="section">
+                <h2>📜 Message History</h2>
+                <div class="input-group">
+                    <button onclick="clearMessages()">Clear History</button>
+                </div>
+                <div id="messages" class="messages">
+                    <div class="message system">
+                        Waiting for messages... Connect to WebSocket first.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test Scenarios -->
+            <div class="section">
+                <h2>🧪 Quick Test Scenarios</h2>
+                <div class="grid">
+                    <button onclick="testSendMessage()">Test: Send Message</button>
+                    <button onclick="testCreateChannel()">Test: Create Channel (REST)</button>
+                    <button onclick="testGetChannels()">Test: Get Channels (REST)</button>
+                    <button onclick="testGetMessages()">Test: Get Messages (REST)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let subscription = null;
+
+        // Connect to WebSocket
+        function connect() {
+            const url = document.getElementById('serverUrl').value;
+            if (!url) {
+                addMessage('error', 'Please enter server URL');
+                return;
+            }
+
+            stompClient = new StompJs.Client({
+                brokerURL: url,
+                reconnectDelay: 5000,
+                heartbeatIncoming: 4000,
+                heartbeatOutgoing: 4000,
+            });
+
+            stompClient.onConnect = function (frame) {
+                addMessage('system', '✅ Connected to WebSocket server');
+                updateStatus(true);
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('subscribeBtn').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+            };
+
+            stompClient.onStompError = function (frame) {
+                addMessage('error', 'STOMP error: ' + frame.body);
+                updateStatus(false);
+            };
+
+            stompClient.onDisconnect = function () {
+                addMessage('system', '❌ Disconnected from server');
+                updateStatus(false);
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('subscribeBtn').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+            };
+
+            stompClient.activate();
+        }
+
+        // Disconnect
+        function disconnect() {
+            if (stompClient) {
+                stompClient.deactivate();
+            }
+        }
+
+        // Subscribe to channel
+        function subscribe() {
+            const channelId = document.getElementById('channelIdSub').value;
+            if (!channelId) {
+                addMessage('error', 'Please enter channel ID');
+                return;
+            }
+
+            if (subscription) {
+                subscription.unsubscribe();
+            }
+
+            const destination = '/topic/channel/' + channelId;
+            subscription = stompClient.subscribe(destination, function (message) {
+                const msg = JSON.parse(message.body);
+                addMessage('received', 
+                    `[${msg.senderName}]: ${msg.content}`, 
+                    new Date(msg.timestamp).toLocaleTimeString()
+                );
+            });
+
+            addMessage('system', '📨 Subscribed to: ' + destination);
+            document.getElementById('subscribedChannel').textContent = destination;
+            document.getElementById('subscriptionStatus').style.display = 'block';
+            document.getElementById('unsubscribeBtn').disabled = false;
+        }
+
+        // Unsubscribe
+        function unsubscribe() {
+            if (subscription) {
+                subscription.unsubscribe();
+                subscription = null;
+                addMessage('system', '❌ Unsubscribed');
+                document.getElementById('subscriptionStatus').style.display = 'none';
+                document.getElementById('unsubscribeBtn').disabled = true;
+            }
+        }
+
+        // Send message
+        function sendMessage() {
+            const channelId = document.getElementById('channelIdSend').value;
+            const content = document.getElementById('messageContent').value;
+
+            if (!channelId || !content) {
+                addMessage('error', 'Channel ID and message content are required');
+                return;
+            }
+
+            if (!stompClient || !stompClient.connected) {
+                addMessage('error', 'Not connected to WebSocket');
+                return;
+            }
+
+            stompClient.publish({
+                destination: '/app/chat/' + channelId,
+                body: JSON.stringify({
+                    content: content
+                })
+            });
+
+            addMessage('sent', `[You]: ${content}`, new Date().toLocaleTimeString());
+            document.getElementById('messageContent').value = '';
+        }
+
+        // Helper functions
+        function addMessage(type, text, time = null) {
+            const messagesDiv = document.getElementById('messages');
+            if (messagesDiv.children[0]?.className.includes('system') && 
+                messagesDiv.children[0].textContent.includes('Waiting')) {
+                messagesDiv.innerHTML = '';
+            }
+
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message ' + type;
+            
+            let content = text;
+            if (time) {
+                content += `<div class="timestamp">${time}</div>`;
+            }
+            
+            messageEl.innerHTML = content;
+            messagesDiv.appendChild(messageEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + (connected ? 'connected' : 'disconnected');
+            statusEl.textContent = connected ? '✅ Connected' : '❌ Disconnected';
+        }
+
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = 
+                '<div class="message system">Messages cleared</div>';
+        }
+
+        // Test functions
+        function testSendMessage() {
+            if (!stompClient?.connected) {
+                addMessage('error', 'Please connect first');
+                return;
+            }
+            document.getElementById('messageContent').value = 'Test message from WebSocket tester 🚀';
+            sendMessage();
+        }
+
+        async function testCreateChannel() {
+            try {
+                const response = await fetch('http://localhost:8080/api/chat/company/1/channels', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: 'Test Channel ' + Date.now(),
+                        description: 'Created by WebSocket tester'
+                    })
+                });
+                const data = await response.json();
+                addMessage('system', 'Channel created: #' + data.name);
+            } catch (e) {
+                addMessage('error', 'Failed to create channel: ' + e.message);
+            }
+        }
+
+        async function testGetChannels() {
+            try {
+                const response = await fetch('http://localhost:8080/api/chat/company/1/channels');
+                const data = await response.json();
+                addMessage('system', `Found ${data.length} channels: ${data.map(c => '#' + c.name).join(', ')}`);
+            } catch (e) {
+                addMessage('error', 'Failed to get channels: ' + e.message);
+            }
+        }
+
+        async function testGetMessages() {
+            try {
+                const channelId = document.getElementById('channelIdSub').value;
+                const response = await fetch(`http://localhost:8080/api/chat/channel/${channelId}`);
+                const data = await response.json();
+                addMessage('system', `Channel: #${data.name}, Messages: ${data.messages?.length || 0}`);
+            } catch (e) {
+                addMessage('error', 'Failed to get messages: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

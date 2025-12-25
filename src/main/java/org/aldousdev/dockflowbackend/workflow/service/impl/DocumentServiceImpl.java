@@ -1,13 +1,18 @@
 package org.aldousdev.dockflowbackend.workflow.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.exceptions.CompanyNotFoundException;
+import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
 import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
 import org.aldousdev.dockflowbackend.workflow.dto.response.DocumentResponse;
 import org.aldousdev.dockflowbackend.workflow.entity.Document;
+import org.aldousdev.dockflowbackend.workflow.exceptions.DocumentUploadException;
+import org.aldousdev.dockflowbackend.workflow.exceptions.InvalidFileException;
 import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
 import org.aldousdev.dockflowbackend.workflow.service.DocumentService;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,8 +31,10 @@ import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
+    private final CompanyRepository companyRepository;
     private final AuthServiceImpl authService;
     private final JWTService jwtService;
 
@@ -35,23 +42,33 @@ public class DocumentServiceImpl implements DocumentService {
     private String uploadDir;
 
     @Override
-    @RequiresRoleLevel(value = 10, message = "Ony workers can upload document")
+    @RequiresRoleLevel(value = 10, message = "Only workers and above can upload document")
     @Transactional
     public DocumentResponse uploadDocument(MultipartFile file) {
+        log.info("Upload document started for user: {}", authService.getCurrentUser().getEmail());
+
+        if (file == null || file.isEmpty()) {
+            log.warn("Attempted to upload empty file");
+            throw new InvalidFileException("File cannot be empty");
+        }
+
         if (!"application/pdf".equals(file.getContentType())) {
-            throw new RuntimeException("Unsupported file type");
+            log.warn("Attempted to upload non-PDF file: {}", file.getContentType());
+            throw new InvalidFileException("Only PDF files are supported. Received: " + file.getContentType());
         }
 
         User currentUser = authService.getCurrentUser();
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if(!(authentication instanceof JwtAuthenticationToken jwtAuth)) {
+            log.error("Invalid authentication token type for user: {}", currentUser.getEmail());
             throw new RuntimeException("Invalid authentication token type");
         }
         String token = jwtAuth.getToken();
         Long companyId = jwtService.extractCompanyId(token);
 
         if(companyId == null){
-            throw new RuntimeException("Company not found");
+            log.error("Company ID not found in JWT token for user: {}", currentUser.getEmail());
+            throw new RuntimeException("Company not found in token");
         }
 
         try{
@@ -62,21 +79,24 @@ public class DocumentServiceImpl implements DocumentService {
             Path filePath = companyDir.resolve(fileName);
 
             Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+            log.debug("File saved to: {}", filePath);
+
+            var company = companyRepository.findById(companyId)
+                    .orElseThrow(() -> new CompanyNotFoundException(
+                        "Company not found with id: " + companyId));
 
             Document document = Document.builder()
                     .originalFilename(file.getOriginalFilename())
                     .filePath(filePath.toString())
                     .fileSize(file.getSize())
-                    .company(currentUser.getMemberships().stream()
-                            .filter(m -> m.getCompany().getId().equals(companyId))
-                            .findFirst()
-                            .get()
-                            .getCompany())
+                    .company(company)
                     .uploadedBy(currentUser)
                     .signed(false)
                     .build();
 
             document = documentRepository.save(document);
+            log.info("Document successfully uploaded. ID: {}, Company: {}, User: {}", 
+                    document.getId(), companyId, currentUser.getEmail());
 
             return DocumentResponse.builder()
                     .id(document.getId())
@@ -89,7 +109,8 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
         }
         catch(IOException exception){
-            throw new RuntimeException("Error in save file"+exception);
+            log.error("IO error during file upload for user: {}", currentUser.getEmail(), exception);
+            throw new DocumentUploadException("Error saving file: " + exception.getMessage(), exception);
         }
     }
 }
