@@ -1,0 +1,116 @@
+package org.aldousdev.dockflowbackend.workflow.service.impl;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
+import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.exceptions.CompanyNotFoundException;
+import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
+import org.aldousdev.dockflowbackend.auth.security.JWTService;
+import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
+import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
+import org.aldousdev.dockflowbackend.workflow.dto.response.DocumentResponse;
+import org.aldousdev.dockflowbackend.workflow.entity.Document;
+import org.aldousdev.dockflowbackend.workflow.exceptions.DocumentUploadException;
+import org.aldousdev.dockflowbackend.workflow.exceptions.InvalidFileException;
+import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
+import org.aldousdev.dockflowbackend.workflow.service.DocumentService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class DocumentServiceImpl implements DocumentService {
+    private final DocumentRepository documentRepository;
+    private final CompanyRepository companyRepository;
+    private final AuthServiceImpl authService;
+    private final JWTService jwtService;
+
+    @Value("${file.upload.dir}")
+    private String uploadDir;
+
+    @Override
+    @RequiresRoleLevel(value = 10, message = "Only workers and above can upload document")
+    @Transactional
+    public DocumentResponse uploadDocument(MultipartFile file) {
+        log.info("Upload document started for user: {}", authService.getCurrentUser().getEmail());
+
+        if (file == null || file.isEmpty()) {
+            log.warn("Attempted to upload empty file");
+            throw new InvalidFileException("File cannot be empty");
+        }
+
+        if (!"application/pdf".equals(file.getContentType())) {
+            log.warn("Attempted to upload non-PDF file: {}", file.getContentType());
+            throw new InvalidFileException("Only PDF files are supported. Received: " + file.getContentType());
+        }
+
+        User currentUser = authService.getCurrentUser();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if(!(authentication instanceof JwtAuthenticationToken jwtAuth)) {
+            log.error("Invalid authentication token type for user: {}", currentUser.getEmail());
+            throw new RuntimeException("Invalid authentication token type");
+        }
+        String token = jwtAuth.getToken();
+        Long companyId = jwtService.extractCompanyId(token);
+
+        if(companyId == null){
+            log.error("Company ID not found in JWT token for user: {}", currentUser.getEmail());
+            throw new RuntimeException("Company not found in token");
+        }
+
+        try{
+            Path companyDir = Paths.get(uploadDir,"company-" + companyId);
+            Files.createDirectories(companyDir);
+
+            String fileName = LocalDateTime.now().toString().replace(":","-")+"_" + file.getOriginalFilename();
+            Path filePath = companyDir.resolve(fileName);
+
+            Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+            log.debug("File saved to: {}", filePath);
+
+            var company = companyRepository.findById(companyId)
+                    .orElseThrow(() -> new CompanyNotFoundException(
+                        "Company not found with id: " + companyId));
+
+            Document document = Document.builder()
+                    .originalFilename(file.getOriginalFilename())
+                    .filePath(filePath.toString())
+                    .fileSize(file.getSize())
+                    .company(company)
+                    .uploadedBy(currentUser)
+                    .signed(false)
+                    .build();
+
+            document = documentRepository.save(document);
+            log.info("Document successfully uploaded. ID: {}, Company: {}, User: {}", 
+                    document.getId(), companyId, currentUser.getEmail());
+
+            return DocumentResponse.builder()
+                    .id(document.getId())
+                    .originalFilename(document.getOriginalFilename())
+                    .filePath(document.getFilePath())
+                    .fileSize(document.getFileSize())
+                    .uploadedAt(document.getUploadedAt())
+                    .uploadedBy(currentUser.getFirstName() + " " + currentUser.getLastName())
+                    .signed(document.getSigned())
+                    .build();
+        }
+        catch(IOException exception){
+            log.error("IO error during file upload for user: {}", currentUser.getEmail(), exception);
+            throw new DocumentUploadException("Error saving file: " + exception.getMessage(), exception);
+        }
+    }
+}
