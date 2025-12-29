@@ -11,6 +11,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -60,6 +61,19 @@ public class User implements UserDetails {
 
     @Column(unique = true)
     private String emailVerificationCode;
+
+    // Refresh token for JWT refresh functionality
+    @Column(length = 500)
+    private String refreshToken;
+
+    @Column
+    private LocalDateTime refreshTokenExpiry;
+
+    @Column(columnDefinition = "integer default 0")
+    private Integer resendCount = 0;
+
+    @Column
+    private LocalDateTime lastResendAt;
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities(){

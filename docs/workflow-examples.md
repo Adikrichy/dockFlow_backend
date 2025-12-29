@@ -22,17 +22,62 @@
 
 ```xml
 <workflow>
-  <step order="1" roleName="Manager" roleLevel="60" action="review"/>
+  <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
   <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="true"/>
   <step order="2" roleName="Accountant" roleLevel="70" action="verify" parallel="true"/>
-  <step order="3" roleName="CEO" roleLevel="100" action="sign"/>
+  <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false"/>
 </workflow>
 ```
 
 **Flow:**
-1. Manager reviews
-2. Director and Accountant approve simultaneously (both order=2)
-3. After both approve → CEO signs
+1. Manager reviews (sequential)
+2. Director and Accountant approve simultaneously (both order=2, parallel="true")
+3. After both parallel tasks approve → CEO signs (sequential)
+
+---
+
+## Example 3: Conditional Routing
+
+```xml
+<workflow>
+  <!-- Sequential steps -->
+  <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
+  <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="false"/>
+  <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false"/>
+  <step order="4" roleName="Legal" roleLevel="75" action="legal_review" parallel="false"/>
+  <step order="5" roleName="Accountant" roleLevel="70" action="verify" parallel="false"/>
+
+  <!-- Conditional routing rules -->
+  <!-- Skip director for low-value documents (< 5,000) -->
+  <onApprove stepOrder="1" condition="isLowValue" targetStep="3" description="Skip director for low-value documents"/>
+
+  <!-- Normal flow for high-value documents -->
+  <onApprove stepOrder="1" condition="!isLowValue" targetStep="2" description="Normal approval flow"/>
+
+  <!-- Return to manager if director rejects -->
+  <onReject stepOrder="2" targetStep="1" description="Return to manager for revision"/>
+
+  <!-- Different paths based on document type -->
+  <onApprove stepOrder="3" condition="isContract" targetStep="4" description="Legal review required for contracts"/>
+  <onApprove stepOrder="3" condition="!isContract" targetStep="5" description="Accounting verification for other documents"/>
+</workflow>
+```
+
+**Conditional Flow Examples:**
+
+**Low-value Invoice (< 5,000):**
+Manager → CEO → Accountant → Complete
+
+**High-value Contract (> 5,000):**
+Manager → Director → CEO → Legal → Complete
+
+**Rejection Flow:**
+Manager → Director (rejects) → Manager (revision) → Director → CEO → Complete
+
+**Key Points:**
+- Set `parallel="true"` for steps that should execute simultaneously
+- All parallel tasks at the same `order` must be completed before moving to next step
+- Tasks are assigned to all users with matching role and sufficient level
 
 ---
 
@@ -189,6 +234,88 @@ client.subscribe('/topic/workflow/company/1', (message) => {
   }
 });
 ```
+
+---
+
+## Bulk Operations
+
+### Bulk Approve Multiple Tasks
+
+```bash
+POST /api/workflow/tasks/bulk-approve
+
+Content-Type: application/json
+Authorization: Bearer <JWT_TOKEN>
+
+{
+  "taskIds": [201, 202, 203],
+  "comment": "Bulk approval of multiple tasks"
+}
+```
+
+Response:
+```json
+{
+  "totalTasks": 3,
+  "successfulCount": 3,
+  "successfulTaskIds": [201, 202, 203],
+  "errors": []
+}
+```
+
+### Bulk Reject Multiple Tasks
+
+```bash
+POST /api/workflow/tasks/bulk-reject
+
+Content-Type: application/json
+Authorization: Bearer <JWT_TOKEN>
+
+{
+  "taskIds": [201, 202],
+  "comment": "Bulk rejection of multiple tasks"
+}
+```
+
+---
+
+## Available Conditions for Conditional Routing
+
+### Predefined Conditions
+
+| Condition | Description | Example |
+|-----------|-------------|---------|
+| `isHighValue` | Amount > 50,000 | High-value contracts |
+| `isLowValue` | Amount ≤ 5,000 | Small invoices |
+| `isMediumValue` | Amount 5,000-50,000 | Medium-value documents |
+| `isContract` | Document type = CONTRACT | Legal documents |
+| `isInvoice` | Document type = INVOICE | Financial documents |
+| `isUrgent` | Priority = HIGH or URGENT | Time-sensitive documents |
+| `isNormal` | Priority = NORMAL or MEDIUM | Standard documents |
+
+### Comparison Conditions
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `field > value` | Greater than | `amount > 10000` |
+| `field >= value` | Greater or equal | `amount >= 50000` |
+| `field < value` | Less than | `amount < 5000` |
+| `field <= value` | Less or equal | `amount <= 1000` |
+| `field = value` | Equal | `priority = HIGH` |
+| `field != value` | Not equal | `type != CONTRACT` |
+
+### Negation
+
+Use `!` prefix to negate any condition:
+- `!isHighValue` - not high value (amount ≤ 50,000)
+- `!isContract` - not a contract (any type except CONTRACT)
+
+### Supported Fields
+
+- `amount` - Document amount (BigDecimal)
+- `priority` - Document priority (LOW, NORMAL, HIGH, URGENT)
+- `type` - Document type (CONTRACT, INVOICE, etc.)
+- `status` - Document status (DRAFT, SUBMITTED, etc.)
 
 ---
 

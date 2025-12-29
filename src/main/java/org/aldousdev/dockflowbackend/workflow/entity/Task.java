@@ -38,6 +38,10 @@ public class Task {
     @JoinColumn(name = "assigned_by_user_id", nullable = false)
     private User assignedBy;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_to_user_id")
+    private User assignedTo;
+
     @Enumerated(EnumType.STRING)
     private TaskStatus status = TaskStatus.PENDING;
 

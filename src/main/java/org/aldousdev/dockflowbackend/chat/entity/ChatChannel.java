@@ -3,6 +3,7 @@ package org.aldousdev.dockflowbackend.chat.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
+import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -38,6 +39,23 @@ public class ChatChannel {
     @Column(updatable = false)
     private LocalDateTime createdAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ChannelType type = ChannelType.CHANNEL;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "chat_channel_members",
+        joinColumns = @JoinColumn(name = "channel_id"),
+        inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
+    private List<User> members;
+
     @OneToMany(mappedBy = "channel", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Message> messages;
+
+    public enum ChannelType {
+        CHANNEL,
+        DM
+    }
 }

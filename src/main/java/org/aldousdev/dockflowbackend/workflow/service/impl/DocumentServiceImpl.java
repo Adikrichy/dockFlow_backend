@@ -14,7 +14,9 @@ import org.aldousdev.dockflowbackend.workflow.entity.Document;
 import org.aldousdev.dockflowbackend.workflow.exceptions.DocumentUploadException;
 import org.aldousdev.dockflowbackend.workflow.exceptions.InvalidFileException;
 import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
+import org.aldousdev.dockflowbackend.workflow.service.DocumentHashService;
 import org.aldousdev.dockflowbackend.workflow.service.DocumentService;
+import org.aldousdev.dockflowbackend.workflow.service.DocumentVersioningService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -37,6 +39,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final CompanyRepository companyRepository;
     private final AuthServiceImpl authService;
     private final JWTService jwtService;
+    private final DocumentVersioningService documentVersioningService;
+    private final DocumentHashService documentHashService;
 
     @Value("${file.upload.dir}")
     private String uploadDir;
@@ -85,6 +89,16 @@ public class DocumentServiceImpl implements DocumentService {
                     .orElseThrow(() -> new CompanyNotFoundException(
                         "Company not found with id: " + companyId));
 
+            // Проверяем дубликаты перед созданием документа
+            String sha256Hash = documentHashService.calculateSha256Hash(file.getBytes());
+            boolean isDuplicate = documentHashService.isDuplicate(sha256Hash, companyId);
+
+            if (isDuplicate) {
+                log.warn("Duplicate document detected for company {}", companyId);
+                // Можно либо выбросить исключение, либо продолжить - зависит от бизнес-логики
+                // throw new DocumentUploadException("Document with identical content already exists");
+            }
+
             Document document = Document.builder()
                     .originalFilename(file.getOriginalFilename())
                     .filePath(filePath.toString())
@@ -95,6 +109,16 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
 
             document = documentRepository.save(document);
+
+            // Создаем первую версию документа
+            try {
+                documentVersioningService.createNewVersion(document, file, currentUser,
+                        "Initial document upload", "UPLOAD");
+                log.info("Created initial version for document {}", document.getId());
+            } catch (Exception e) {
+                log.error("Failed to create initial version for document {}", document.getId(), e);
+                // Не выбрасываем исключение - документ создан, просто без версий
+            }
             log.info("Document successfully uploaded. ID: {}, Company: {}, User: {}", 
                     document.getId(), companyId, currentUser.getEmail());
 

@@ -216,15 +216,28 @@ public class WorkflowXmlParser {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <workflow>
-                    <!-- Sequential steps with parallel execution at step 2 -->
+                    <!-- Sequential steps -->
                     <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false" description="Initial review"/>
-                    <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="true" description="Director approval"/>
+                    <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="false" description="Director approval"/>
                     <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false" description="Final signature"/>
-                    
-                    <!-- Routing rules for conditional workflow -->
-                    <onReject stepOrder="1" targetStep="1" description="Return to same manager for revision"/>
-                    <onReject stepOrder="2" targetStep="1" description="If director rejects, return to manager for revision"/>
-                    <onReject stepOrder="3" description="If CEO rejects, complete workflow as rejected"/>
+                    <step order="4" roleName="Accountant" roleLevel="70" action="verify" parallel="false" description="Final verification"/>
+                    <step order="5" roleName="Legal" roleLevel="75" action="legal_review" parallel="false" description="Legal review"/>
+
+                    <!-- Conditional routing rules -->
+                    <!-- Skip director for low-value documents -->
+                    <onApprove stepOrder="1" condition="isLowValue" targetStep="3" description="Skip director for low-value documents"/>
+                    <onApprove stepOrder="1" condition="!isLowValue" targetStep="2" description="Normal flow for high-value documents"/>
+
+                    <!-- Return to manager if director rejects -->
+                    <onReject stepOrder="2" targetStep="1" description="Return to manager if director rejects"/>
+
+                    <!-- Different paths based on document type -->
+                    <onApprove stepOrder="3" condition="isContract" targetStep="5" description="Legal review required for contracts"/>
+                    <onApprove stepOrder="3" condition="!isContract" targetStep="4" description="Accountant verification for other documents"/>
+
+                    <!-- Final rejection rules -->
+                    <onReject stepOrder="4" targetStep="1" description="Return to manager if accountant rejects"/>
+                    <onReject stepOrder="5" description="Complete workflow as rejected if legal rejects"/>
                 </workflow>
                 """;
     }

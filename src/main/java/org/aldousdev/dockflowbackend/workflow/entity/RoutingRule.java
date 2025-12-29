@@ -51,6 +51,12 @@ public class RoutingRule {
     private Boolean isOverrideAllowed = true;
 
     /**
+     * Условие для применения правила (опционально)
+     */
+    @Column(name = "condition", length = 500)
+    private String condition;
+
+    /**
      * Дополнительная информация
      */
     @Column(name = "description", length = 500)

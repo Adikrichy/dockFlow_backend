@@ -26,6 +26,9 @@ public class JWTService {
     @Value("${jwt.expiration}")
     private long expiration;
 
+    @Value("${jwt.refresh-expiration:604800000}") // 7 дней по умолчанию
+    private long refreshExpiration;
+
     // Генерация ключа для подписи
     private Key getSignInKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
@@ -59,6 +62,51 @@ public class JWTService {
                 .setExpiration(expiryDate)
                 .signWith(getSignInKey(),SignatureAlgorithm.HS512)
                 .compact();
+    }
+
+    // Генерация refresh token
+    public String generateRefreshToken(User user) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + refreshExpiration);
+
+        return Jwts.builder()
+                .setSubject(user.getEmail())
+                .claim("tokenType", "refresh")
+                .claim("userId", user.getId())
+                .setIssuedAt(now)
+                .setExpiration(expiryDate)
+                .signWith(getSignInKey(), SignatureAlgorithm.HS512)
+                .compact();
+    }
+
+    // Проверка валидности refresh token
+    public boolean isRefreshTokenValid(String refreshToken, User user) {
+        try {
+            boolean isValid = isTokenValid(refreshToken) &&
+                            extractEmail(refreshToken).equals(user.getEmail()) &&
+                            "refresh".equals(extractTokenType(refreshToken));
+
+            // Дополнительная проверка на соответствие сохраненному refresh token
+            return isValid && refreshToken.equals(user.getRefreshToken()) &&
+                   user.getRefreshTokenExpiry() != null &&
+                   user.getRefreshTokenExpiry().isAfter(java.time.LocalDateTime.now());
+
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Извлечение типа токена (access/refresh)
+    public String extractTokenType(String token) {
+        return extractClaim(token, claims -> claims.get("tokenType", String.class));
+    }
+
+    // Извлечение даты истечения refresh token
+    public java.time.LocalDateTime getRefreshTokenExpiry(String refreshToken) {
+        Date expiry = extractClaim(refreshToken, Claims::getExpiration);
+        return expiry.toInstant()
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDateTime();
     }
 
     // Проверка валидности токена (подпись + срок)

@@ -5,9 +5,28 @@
 ```
 1. POST /api/register                 → Create account
 2. POST /api/auth/verify-email        → Verify email
-3. POST /api/auth/login               → Get JWT token (in cookie)
-4. [Use token for all subsequent requests]
-5. POST /api/auth/logout              → Clear token
+3. POST /api/auth/login               → Get JWT + refresh tokens
+4. [Use JWT token for all requests]
+5. POST /api/auth/refresh             → Refresh expired JWT
+6. POST /api/auth/logout              → Clear all tokens
+```
+
+### 🔄 Token Management
+
+**Access Token (JWT):**
+- Expires: 1 hour
+- Stored: HttpOnly cookie
+- Usage: All API requests
+
+**Refresh Token:**
+- Expires: 7 days
+- Stored: Database
+- Usage: Get new access token
+
+```
+POST /api/auth/refresh
+Authorization: Bearer <refresh_token>
+→ Returns new JWT in HttpOnly cookie
 ```
 
 ---
@@ -126,17 +145,68 @@ To execute tasks in parallel at the same step level:
 
 ```xml
 <workflow>
-  <step order="1" roleName="Manager" roleLevel="60" parallel="false"/>
-  
+  <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
+
   <!-- These 2 execute in parallel -->
-  <step order="2" roleName="Lawyer" roleLevel="70" parallel="true"/>
-  <step order="2" roleName="Accountant" roleLevel="65" parallel="true"/>
-  
-  <step order="3" roleName="CEO" roleLevel="100" parallel="false"/>
+  <step order="2" roleName="Lawyer" roleLevel="70" action="review" parallel="true"/>
+  <step order="2" roleName="Accountant" roleLevel="65" action="check" parallel="true"/>
+
+  <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false"/>
 </workflow>
 ```
 
 All tasks at order=2 must be approved before moving to order=3.
+
+---
+
+## 🔀 Conditional Routing
+
+```xml
+<workflow>
+  <!-- Steps -->
+  <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
+  <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="false"/>
+  <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false"/>
+
+  <!-- Conditional rules -->
+  <onApprove stepOrder="1" condition="isLowValue" targetStep="3" description="Skip director"/>
+  <onApprove stepOrder="1" condition="!isLowValue" targetStep="2" description="Normal flow"/>
+  <onReject stepOrder="2" targetStep="1" description="Return to manager"/>
+</workflow>
+```
+
+### 📋 Conditions
+
+**Predefined:**
+- `isHighValue` (>50k), `isLowValue` (≤5k)
+- `isContract`, `isInvoice`
+- `isUrgent` (HIGH/URGENT priority)
+
+**Comparisons:**
+- `amount > 10000`, `priority = HIGH`
+- `type != CONTRACT`
+
+**Negation:** `!isHighValue`
+
+---
+
+## 🔄 Bulk Operations
+
+```bash
+# Approve multiple tasks at once
+POST /api/workflow/tasks/bulk-approve
+{
+  "taskIds": [201, 202, 203],
+  "comment": "Bulk approval"
+}
+
+# Reject multiple tasks at once
+POST /api/workflow/tasks/bulk-reject
+{
+  "taskIds": [201, 202],
+  "comment": "Bulk rejection"
+}
+```
 
 ---
 
@@ -165,6 +235,77 @@ Check application logs if email not configured.
 ```
 
 Users can only approve if their role level >= task required level.
+
+---
+
+## 🔒 Security Features
+
+### 🛡️ Rate Limiting
+- **Auth endpoints**: 10 requests/minute
+- **Other endpoints**: 100 requests/hour
+- **IP-based tracking**
+- **Automatic cleanup**
+
+### 📊 Security Audit
+**Events logged:**
+- ✅ Login success/failure
+- ✅ Token refresh
+- ✅ Logout
+- ✅ Rate limit violations
+- ✅ Suspicious activity
+
+---
+
+## 📄 Document Management
+
+### 📝 Version Control
+```bash
+# Upload new version
+POST /api/documents/{id}/versions
+file: newfile.pdf
+changeDescription: "Updated contract terms"
+changeType: "UPDATE"
+
+# Get all versions
+GET /api/documents/{id}/versions
+
+# Add watermark
+POST /api/documents/{id}/watermark
+watermarkText: "CONFIDENTIAL"
+
+# Sign document
+POST /api/documents/{id}/sign
+signatureText: "Approved"
+signerName: "John Doe"
+
+# Restore version
+POST /api/documents/{id}/versions/{version}/restore
+```
+
+### 🔍 Document Features
+- **SHA-256 hashing** - duplicate detection
+- **Version history** - track all changes
+- **Watermarks** - add security markings
+- **Digital signatures** - electronic approval
+- **PDF processing** - templates, compression
+- **Integrity checks** - file validation
+
+### 🔐 Token Security
+- **HttpOnly cookies** (XSS protection)
+- **Secure flag** (HTTPS only)
+- **Refresh token rotation**
+- **Automatic cleanup** of expired tokens
+
+---
+
+## 🚨 Error Codes
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 401 | Token expired/invalid | Refresh token or login |
+| 403 | Insufficient permissions | Check user role |
+| 429 | Rate limit exceeded | Wait and retry |
+| 400 | Invalid request | Check request format |
 
 ---
 

@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 @Slf4j
 public class ChatWebSocketController {
     private final ChatService chatService;
+    private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
 
     /**
      * WebSocket эндпоинт для отправки сообщений
@@ -26,7 +27,8 @@ public class ChatWebSocketController {
     @SendTo("/topic/channel/{channelId}")
     public ChatMessageDTO sendMessage(
             @DestinationVariable Long channelId,
-            SendMessageRequest request) {
+            SendMessageRequest request,
+            java.security.Principal principal) {
         
         log.info("WebSocket message received in channel: {}", channelId);
         
@@ -35,7 +37,28 @@ public class ChatWebSocketController {
             return null;
         }
 
-        return chatService.saveMessage(channelId, request.getContent());
+        if (principal == null) {
+             log.error("No principal found in WebSocket message");
+             throw new RuntimeException("Unauthorized");
+        }
+        
+        org.aldousdev.dockflowbackend.auth.entity.User user = null;
+        
+        // Try to get User from Authentication object
+        if (principal instanceof org.springframework.security.core.Authentication auth) {
+            if (auth.getPrincipal() instanceof org.aldousdev.dockflowbackend.auth.entity.User u) {
+                user = u;
+            }
+        }
+        
+        // Fallback: search by name (email) if principal is just a simple Principal object
+        if (user == null) {
+            log.warn("User not found in Principal class ({}), searching by name: {}", principal.getClass().getName(), principal.getName());
+             user = userRepository.findByEmail(principal.getName())
+                     .orElseThrow(() -> new RuntimeException("User not found in Principal and database: " + principal.getName()));
+        }
+
+        return chatService.saveMessage(channelId, request.getContent(), user);
     }
 
     /**
@@ -45,7 +68,8 @@ public class ChatWebSocketController {
     @SendTo("/topic/channel/{channelId}")
     public ChatMessageDTO sendChatMessage(
             @DestinationVariable Long channelId,
-            SendMessageRequest request) {
+            SendMessageRequest request,
+            java.security.Principal principal) {
         
         log.info("WebSocket message received in channel: {}", channelId);
         
@@ -54,6 +78,24 @@ public class ChatWebSocketController {
             return null;
         }
 
-        return chatService.saveMessage(channelId, request.getContent());
+        if (principal == null) {
+            log.error("No principal found in WebSocket message");
+            throw new RuntimeException("Unauthorized");
+        }
+
+        org.aldousdev.dockflowbackend.auth.entity.User user = null;
+        if (principal instanceof org.springframework.security.core.Authentication auth) {
+            if (auth.getPrincipal() instanceof org.aldousdev.dockflowbackend.auth.entity.User u) {
+                user = u;
+            }
+        }
+
+        if (user == null) {
+            log.warn("User not found in Principal class ({}), searching by name: {}", principal.getClass().getName(), principal.getName());
+            user = userRepository.findByEmail(principal.getName())
+                    .orElseThrow(() -> new RuntimeException("User not found in Principal and database: " + principal.getName()));
+        }
+
+        return chatService.saveMessage(channelId, request.getContent(), user);
     }
 }

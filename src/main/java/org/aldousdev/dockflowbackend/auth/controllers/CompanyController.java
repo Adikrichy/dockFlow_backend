@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.List;
+import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
 
 @RestController
 @RequiredArgsConstructor
@@ -40,6 +41,7 @@ public class CompanyController {
     private final CompanyServiceImpl companyService;
     private final AuthServiceImpl authService;
     private final CompanyRoleEntityRepository companyRoleEntityRepository;
+    private final org.aldousdev.dockflowbackend.auth.security.JWTService jwtService;
 
     @PostMapping("/create")
     @Operation(summary = "Создать новую компанию", 
@@ -104,6 +106,14 @@ public class CompanyController {
 
         CompanyResponse response = companyService.updateCompany(id,companyRequest,token);
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/join/{companyId}")
+    @Operation(summary = "Присоединиться к компании",
+            description = "Добавляет текущего пользователя в список участников компании с ролью по умолчанию (Worker)")
+    public ResponseEntity<Void> joinCompany(@PathVariable Long companyId) {
+        companyService.joinCompany(companyId);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/{companyId}/enter")
@@ -207,6 +217,42 @@ public class CompanyController {
     public ResponseEntity<List<CreateRoleResponse>> getAllRoles(){
         List<CreateRoleResponse> roles = companyService.getAllRoles();
         return ResponseEntity.status(HttpStatus.OK).body(roles);
+    }
+
+    @GetMapping("/current")
+    @Operation(summary = "Получить текущую компанию",
+            description = "Возвращает информацию о компании, в которую выполнен вход (через токен jwtWithCompany)")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Информация о компании",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = CompanyResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Компания не найдена или вход не выполнен")
+    })
+    public ResponseEntity<CompanyResponse> getCurrentCompany(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        String token = null;
+
+        if (cookies != null) {
+            token = Arrays.stream(cookies)
+                    .filter(cookie -> "jwtWithCompany".equals(cookie.getName()))
+                    .map(Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        if (token == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        try {
+            if (!jwtService.isTokenValid(token)) {
+                return ResponseEntity.status(401).build();
+            }
+            Long companyId = jwtService.extractCompanyId(token);
+            CompanyResponse companyResponse = companyService.getCompanyById(companyId);
+            return ResponseEntity.ok(companyResponse);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     private void clearAuthCookies(HttpServletRequest request, HttpServletResponse response) {

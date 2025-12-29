@@ -70,4 +70,23 @@ public class RegisterController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid verification code");
         }
     }
+    
+    @PostMapping("/auth/resend-verification-code")
+    @Operation(summary = "Повторно отправить код верификации", 
+            description = "Генерирует новый код и отправляет его на email. " +
+                    "Ограничение: не чаще 1 раза в минуту, максимум 3 попытки.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Код отправлен"),
+            @ApiResponse(responseCode = "400", description = "Превышен лимит попыток или email не найден")
+    })
+    public ResponseEntity<String> resendVerificationCode(
+            @Parameter(description = "Email пользователя", required = true)
+            @RequestParam String email) {
+        try {
+            userService.resendVerificationCode(email);
+            return ResponseEntity.ok("Verification code resent");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
+        }
+    }
 }

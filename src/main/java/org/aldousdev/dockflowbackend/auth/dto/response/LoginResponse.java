@@ -11,4 +11,6 @@ public class LoginResponse {
     private String userType;
     private String message;
     private long expiresAt;
+
+    private UserResponse user;
 }

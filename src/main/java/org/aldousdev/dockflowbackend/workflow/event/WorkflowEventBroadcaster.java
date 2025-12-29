@@ -35,15 +35,31 @@ public class WorkflowEventBroadcaster {
      */
     public void broadcastTaskCreated(Long companyId, Long taskId, String roleName) {
         log.info("Broadcasting task created event for role: {}", roleName);
-        
+
         Map<String, Object> event = new HashMap<>();
         event.put("type", "TASK_CREATED");
         event.put("taskId", taskId);
         event.put("roleName", roleName);
         event.put("timestamp", LocalDateTime.now());
-        
+
         messagingTemplate.convertAndSend("/topic/workflow/company/" + companyId, (Object) event);
         messagingTemplate.convertAndSend("/topic/workflow/role/" + roleName, (Object) event);
+    }
+
+    /**
+     * Отправляет уведомление о назначении task конкретному пользователю
+     */
+    public void broadcastTaskAssigned(Long companyId, Long taskId, Long userId) {
+        log.info("Broadcasting task assigned event to user: {}", userId);
+
+        Map<String, Object> event = new HashMap<>();
+        event.put("type", "TASK_ASSIGNED");
+        event.put("taskId", taskId);
+        event.put("assignedToUserId", userId);
+        event.put("timestamp", LocalDateTime.now());
+
+        messagingTemplate.convertAndSend("/topic/workflow/company/" + companyId, (Object) event);
+        messagingTemplate.convertAndSend("/user/" + userId + "/workflow", (Object) event);
     }
 
     /**

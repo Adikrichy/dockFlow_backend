@@ -3,6 +3,7 @@ package org.aldousdev.dockflowbackend.auth.components;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
+import org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
 import org.springframework.security.core.Authentication;
@@ -34,7 +35,7 @@ public class RoleLevelAspect {
         Integer roleLevel = jwtService.extractCompanyRoleLevel(token);
 
         if (roleLevel == null) {
-            throw new SecurityException("User is not associated with any company context");
+            throw new CompanyAccessDeniedException("User is not associated with any company context");
         }
 
         if (roleLevel < requiresRoleLevel.value()) {

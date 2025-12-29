@@ -4,9 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.workflow.enums.DocumentStatus;
+import org.aldousdev.dockflowbackend.workflow.enums.DocumentType;
+import org.aldousdev.dockflowbackend.workflow.enums.Priority;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -44,6 +48,27 @@ public class Document {
     @Column(updatable = false, nullable = false)
     private LocalDateTime uploadedAt;
 
+    @Builder.Default
     private Boolean signed = false;
+
+    // Fields for conditional routing
+    @Column(precision = 19, scale = 2)
+    private BigDecimal amount;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private Priority priority = Priority.NORMAL;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private DocumentType documentType = DocumentType.GENERAL;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private DocumentStatus status = DocumentStatus.DRAFT;
+
+    // Metadata for extensibility (JSON field for additional conditions)
+    @Column(columnDefinition = "TEXT")
+    private String metadata;
 
 }

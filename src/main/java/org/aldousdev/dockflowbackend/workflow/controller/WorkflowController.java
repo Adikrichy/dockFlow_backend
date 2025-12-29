@@ -12,12 +12,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.service.UserService;
+import org.aldousdev.dockflowbackend.workflow.dto.request.BulkTaskRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.TaskApprovalRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.response.BulkOperationResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowInstanceResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowTemplateResponse;
+import org.aldousdev.dockflowbackend.workflow.entity.Task;
+import org.aldousdev.dockflowbackend.workflow.service.BulkWorkflowService;
 import org.aldousdev.dockflowbackend.workflow.service.WorkflowService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -33,6 +37,7 @@ import java.util.List;
 @Tag(name = "Workflow", description = "Управление workflow процессами для документов")
 public class WorkflowController {
     private final WorkflowService workflowService;
+    private final BulkWorkflowService bulkWorkflowService;
     private final UserService userService;
 
     /**
@@ -255,5 +260,75 @@ public class WorkflowController {
         log.info("Fetching audit log for workflow instance: {}", instanceId);
         List<WorkflowAuditLogResponse> auditLog = workflowService.getWorkflowAuditLog(instanceId);
         return ResponseEntity.ok(auditLog);
+    }
+
+    /**
+     * POST /api/workflow/tasks/bulk-approve - массовое одобрение задач
+     */
+    @PostMapping("/tasks/bulk-approve")
+    @RequiresRoleLevel(10) // Все аутентифицированные пользователи
+    @Operation(summary = "Массовое одобрение задач",
+            description = "Одновременно одобряет несколько задач. Проверяет права доступа для каждой задачи.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Массовое одобрение выполнено",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = BulkOperationResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некоторые задачи не могут быть одобрены"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "Недостаточно прав для некоторых задач")
+    })
+    public ResponseEntity<BulkOperationResponse> bulkApproveTasks(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные для массового одобрения")
+            @RequestBody BulkTaskRequest request,
+            Authentication authentication) {
+
+        log.info("Bulk approving {} tasks", request.getTaskIds().size());
+        User user = userService.getUserByEmail(authentication.getName());
+
+        // Получаем текущую компанию пользователя
+        var companyId = user.getMemberships().get(0).getCompany().getId();
+
+        // Получаем задачи с проверкой прав доступа
+        List<Task> tasks = bulkWorkflowService.getTasksWithAccessCheck(
+            request.getTaskIds(), user, companyId);
+
+        BulkOperationResponse response = bulkWorkflowService.bulkApprove(
+            tasks, user, request.getComment());
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * POST /api/workflow/tasks/bulk-reject - массовое отклонение задач
+     */
+    @PostMapping("/tasks/bulk-reject")
+    @RequiresRoleLevel(10) // Все аутентифицированные пользователи
+    @Operation(summary = "Массовое отклонение задач",
+            description = "Одновременно отклоняет несколько задач. Проверяет права доступа для каждой задачи.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Массовое отклонение выполнено",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = BulkOperationResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некоторые задачи не могут быть отклонены"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "Недостаточно прав для некоторых задач")
+    })
+    public ResponseEntity<BulkOperationResponse> bulkRejectTasks(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные для массового отклонения")
+            @RequestBody BulkTaskRequest request,
+            Authentication authentication) {
+
+        log.info("Bulk rejecting {} tasks", request.getTaskIds().size());
+        User user = userService.getUserByEmail(authentication.getName());
+
+        // Получаем текущую компанию пользователя
+        var companyId = user.getMemberships().get(0).getCompany().getId();
+
+        // Получаем задачи с проверкой прав доступа
+        List<Task> tasks = bulkWorkflowService.getTasksWithAccessCheck(
+            request.getTaskIds(), user, companyId);
+
+        BulkOperationResponse response = bulkWorkflowService.bulkReject(
+            tasks, user, request.getComment());
+
+        return ResponseEntity.ok(response);
     }
 }

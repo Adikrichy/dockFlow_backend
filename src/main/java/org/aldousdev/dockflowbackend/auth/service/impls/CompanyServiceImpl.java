@@ -6,6 +6,7 @@ import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.entity.Membership;
@@ -247,4 +248,66 @@ public class CompanyServiceImpl implements CompanyService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<UserResponse> getCompanyMembers() {
+        User currentUser = authService.getCurrentUser();
+        // Assuming current context or find first company. 
+        Company company = currentUser.getMemberships().stream()
+                .findFirst()
+                .map(Membership::getCompany)
+                .orElseThrow(() -> new RuntimeException("User is not a member of any company"));
+
+        return membershipRepository.findByCompany(company).stream()
+                .map(m -> {
+                    User u = m.getUser();
+                    return UserResponse.builder()
+                            .id(u.getId())
+                            .email(u.getEmail())
+                            .firstName(u.getFirstName())
+                            .lastName(u.getLastName())
+                            .companyRole(m.getRole().getName())
+                            .build();
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public CompanyResponse getCompanyById(Long id) {
+        Company company = companyRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Company not found"));
+        return companyMapper.toDto(company);
+    }
+
+    @Override
+    @Transactional
+    public void joinCompany(Long companyId) {
+        User user = authService.getCurrentUser();
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new RuntimeException("Company not found"));
+
+        // Check if already a member
+        if (membershipRepository.findByCompanyIdAndUserId(companyId, user.getId()).isPresent()) {
+            return; // Already joined
+        }
+
+        // Find default "Worker" role
+        CompanyRoleEntity workerRole = companyRoleEntityRepository.findByCompanyId(companyId).stream()
+                .filter(r -> "Worker".equalsIgnoreCase(r.getName()))
+                .findFirst()
+                .orElseGet(() -> {
+                    // Fallback to any role or create one if none exist? 
+                    // Let's at least try to find any role with lowest level if Worker not found
+                    return companyRoleEntityRepository.findByCompanyId(companyId).stream()
+                            .min((r1, r2) -> Integer.compare(r1.getLevel(), r2.getLevel()))
+                            .orElseThrow(() -> new RuntimeException("No roles available in this company"));
+                });
+
+        Membership membership = Membership.builder()
+                .company(company)
+                .user(user)
+                .role(workerRole)
+                .build();
+        
+        membershipRepository.save(membership);
+    }
 }

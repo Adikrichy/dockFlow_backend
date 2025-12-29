@@ -7,4 +7,5 @@ import org.aldousdev.dockflowbackend.auth.entity.User;
 public interface UserService {
     RegisterResponse register(RegisterRequest registerRequest);
     User getUserByEmail(String email);
+    void resendVerificationCode(String email);
 }

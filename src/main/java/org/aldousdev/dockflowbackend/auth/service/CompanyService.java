@@ -4,6 +4,7 @@ import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.entity.User;
@@ -19,4 +20,7 @@ public interface CompanyService {
     CompanyRoleEntity initDefaultRoles(Company company, User currentUser);
     List<CreateRoleResponse> getAllRoles();
     void deleteCompany(Long id);
+    CompanyResponse getCompanyById(Long id);
+    List<UserResponse> getCompanyMembers();
+    void joinCompany(Long companyId);
 }

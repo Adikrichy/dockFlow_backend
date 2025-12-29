@@ -73,5 +73,41 @@ public class UserServiceImpl implements UserService {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
     }
+
+    @Override
+    @Transactional
+    public void resendVerificationCode(String email) {
+        User user = getUserByEmail(email);
+
+        if (Boolean.TRUE.equals(user.getEmailVerified())) {
+            throw new RuntimeException("Email is already verified");
+        }
+
+        // Rate limiting: 1 minute
+        if (user.getLastResendAt() != null &&
+                user.getLastResendAt().isAfter(java.time.LocalDateTime.now().minusMinutes(1))) {
+            throw new RuntimeException("Please wait 1 minute before resending the code");
+        }
+
+        // Max attempts: 3
+        if (user.getResendCount() >= 3) {
+            throw new RuntimeException("Maximum resend attempts reached. Please contact support.");
+        }
+
+        String newCode = UUID.randomUUID().toString();
+        user.setEmailVerificationCode(newCode);
+        user.setResendCount(user.getResendCount() + 1);
+        user.setLastResendAt(java.time.LocalDateTime.now());
+        
+        userRepository.save(user);
+
+        try {
+            emailService.sendVerificationEmail(user.getEmail(), newCode);
+            log.info("Verification email resent to: {}", user.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to resend verification email to: {}", user.getEmail(), e);
+            throw new RuntimeException("Failed to send verification email");
+        }
+    }
 }
 

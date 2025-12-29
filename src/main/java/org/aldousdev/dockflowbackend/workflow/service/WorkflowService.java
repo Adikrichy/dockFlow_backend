@@ -44,6 +44,30 @@ public class WorkflowService {
     private final WorkflowAuditService auditService;
 
     /**
+     * Инициализирует workflow для тестирования (делегирует WorkflowEngine)
+     */
+    @Transactional
+    public void initializeWorkflow(WorkflowInstance instance, String workflowXml) {
+        workflowEngine.initializeWorkflow(instance, workflowXml);
+    }
+
+    /**
+     * Одобряет задачу для тестирования (делегирует WorkflowEngine)
+     */
+    @Transactional
+    public void approveTask(Task task, User user, String comment) {
+        workflowEngine.approveTask(task, user, comment);
+    }
+
+    /**
+     * Отклоняет задачу для тестирования (делегирует WorkflowEngine)
+     */
+    @Transactional
+    public void rejectTask(Task task, User user, String comment) {
+        workflowEngine.rejectTask(task, user, comment);
+    }
+
+    /**
      * Создает новый workflow template с правилами маршрутизации
      */
     @Transactional
@@ -76,6 +100,7 @@ public class WorkflowService {
                         .stepOrder(rule.getStepOrder())
                         .routingType(routingType)
                         .targetStep(rule.getTargetStep())
+                        .condition(rule.getCondition())
                         .description(rule.getDescription())
                         .isOverrideAllowed(true)
                         .build();

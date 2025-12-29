@@ -36,6 +36,22 @@ public class ChatController {
     }
 
     /**
+     * Получить список лс
+     */
+    @GetMapping("/dms")
+    public ResponseEntity<List<ChatChannelResponse>> getUserDMs() {
+        return ResponseEntity.ok(chatService.getUserDMs());
+    }
+
+    /**
+     * Начать или получить лс с пользователем
+     */
+    @PostMapping("/dm/{targetUserId}")
+    public ResponseEntity<ChatChannelResponse> startDM(@PathVariable Long targetUserId) {
+        return ResponseEntity.ok(chatService.getOrCreateDM(targetUserId));
+    }
+
+    /**
      * Создать новый канал
      */
     @PostMapping("/company/{companyId}/channels")
