@@ -38,7 +38,7 @@ public class ChatWebSocketController {
         }
 
         if (principal == null) {
-             log.error("No principal found in WebSocket message");
+             log.error("No principal found in WebSocket message for channel: {}", channelId);
              throw new RuntimeException("Unauthorized");
         }
         
@@ -53,9 +53,16 @@ public class ChatWebSocketController {
         
         // Fallback: search by name (email) if principal is just a simple Principal object
         if (user == null) {
-            log.warn("User not found in Principal class ({}), searching by name: {}", principal.getClass().getName(), principal.getName());
              user = userRepository.findByEmail(principal.getName())
                      .orElseThrow(() -> new RuntimeException("User not found in Principal and database: " + principal.getName()));
+        }
+
+        log.info("Message from User: {} (Email: {}). Requested senderId: {}", 
+                user.getId(), user.getEmail(), request.getSenderId());
+
+        if (request.getSenderId() != null && !request.getSenderId().equals(user.getId())) {
+            log.warn("SESSION MISMATCH: UI thinks it's user {}, but session is user {}", 
+                    request.getSenderId(), user.getId());
         }
 
         return chatService.saveMessage(channelId, request.getContent(), user);

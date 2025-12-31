@@ -18,9 +18,9 @@ public interface CompanyService {
     String enterCompany(Long id);
     String leaveCompany();
     CompanyRoleEntity initDefaultRoles(Company company, User currentUser);
-    List<CreateRoleResponse> getAllRoles();
+    List<CreateRoleResponse> getAllRoles(Long companyId);
     void deleteCompany(Long id);
     CompanyResponse getCompanyById(Long id);
-    List<UserResponse> getCompanyMembers();
+    List<UserResponse> getCompanyMembers(Long companyId);
     void joinCompany(Long companyId);
 }

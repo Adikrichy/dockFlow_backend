@@ -9,4 +9,6 @@ public interface AuthService {
     LoginResponse login(LoginRequest loginRequest, HttpServletResponse response);
     void logout(HttpServletResponse response);
     User getCurrentUser();
+    void forgotPassword(String email);
+    void resetPassword(String token, String newPassword);
 }

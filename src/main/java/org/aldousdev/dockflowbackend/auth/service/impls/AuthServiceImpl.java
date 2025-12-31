@@ -10,6 +10,8 @@ import org.aldousdev.dockflowbackend.auth.dto.response.LoginResponse;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.enums.Status;
 import org.aldousdev.dockflowbackend.auth.exceptions.UserNotActiveException;
+import org.aldousdev.dockflowbackend.auth.entity.PasswordResetToken;
+import org.aldousdev.dockflowbackend.auth.repository.PasswordResetTokenRepository;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.mapper.AuthMapper;
@@ -18,9 +20,11 @@ import org.aldousdev.dockflowbackend.auth.service.SecurityAuditService;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +35,8 @@ public class AuthServiceImpl implements AuthService {
     private final JWTService jwtService;
     private final AuthMapper authMapper;
     private final SecurityAuditService securityAuditService;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final EmailServiceImpl emailService;
 
     @Override
     public LoginResponse login(LoginRequest request, HttpServletResponse response) {
@@ -39,7 +45,7 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("Login attempt for email: {} from IP: {}", request.getEmail(), clientIP);
 
-        User user = userRepository.findByEmail(request.getEmail())
+        User user = userRepository.findByEmailWithMemberships(request.getEmail())
                 .orElseThrow(() -> {
                     securityAuditService.logLoginFailed(request.getEmail(), clientIP, userAgent, "User not found");
                     return new RuntimeException("User not found");
@@ -56,7 +62,18 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // Генерация токенов
-        String accessToken = jwtService.generateToken(user);
+        String accessToken;
+        if (user.getMemberships() != null && !user.getMemberships().isEmpty()) {
+            var membership = user.getMemberships().get(0);
+            java.util.Map<String, Object> claims = new java.util.HashMap<>();
+            claims.put("companyRole", membership.getRole().getName());
+            claims.put("companyId", membership.getCompany().getId());
+            claims.put("companyRoleLevel", membership.getRole().getLevel());
+            accessToken = jwtService.generateCompanyToken(user, claims);
+        } else {
+            accessToken = jwtService.generateToken(user);
+        }
+
         String refreshToken = jwtService.generateRefreshToken(user);
         LocalDateTime refreshExpiry = jwtService.getRefreshTokenExpiry(refreshToken);
 
@@ -119,7 +136,7 @@ public class AuthServiceImpl implements AuthService {
                     return new RuntimeException("No refresh token");
                 });
 
-        User user = userRepository.findByRefreshToken(refreshToken)
+        User user = userRepository.findByRefreshTokenWithMemberships(refreshToken)
                 .orElseThrow(() -> {
                     securityAuditService.logTokenRefreshFailed("unknown", "unknown", "Refresh token not found in DB");
                     return new RuntimeException("Invalid refresh token");
@@ -136,7 +153,17 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // Новый access token
-        String newAccessToken = jwtService.generateToken(user);
+        String newAccessToken;
+        if (user.getMemberships() != null && !user.getMemberships().isEmpty()) {
+            var membership = user.getMemberships().get(0);
+            java.util.Map<String, Object> claims = new java.util.HashMap<>();
+            claims.put("companyRole", membership.getRole().getName());
+            claims.put("companyId", membership.getCompany().getId());
+            claims.put("companyRoleLevel", membership.getRole().getLevel());
+            newAccessToken = jwtService.generateCompanyToken(user, claims);
+        } else {
+            newAccessToken = jwtService.generateToken(user);
+        }
 
         // Ротация refresh token (безопасность)
         String newRefreshToken = jwtService.generateRefreshToken(user);
@@ -195,6 +222,50 @@ public class AuthServiceImpl implements AuthService {
         }
         return request.getRemoteAddr();
     }
+    @Override
+    @Transactional
+    public void forgotPassword(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
+
+        // Delete existing tokens for this user
+        passwordResetTokenRepository.deleteByUser(user);
+
+        String token = UUID.randomUUID().toString();
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .token(token)
+                .user(user)
+                .expiryDate(LocalDateTime.now().plusHours(1))
+                .build();
+
+        passwordResetTokenRepository.save(resetToken);
+
+        String resetLink = "http://localhost:5173/reset-password?token=" + token;
+        emailService.sendPasswordResetEmail(user.getEmail(), resetLink);
+        
+        log.info("Password reset link sent to: {}", email);
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(String token, String newPassword) {
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
+                .orElseThrow(() -> new RuntimeException("Invalid token"));
+
+        if (resetToken.isExpired()) {
+            passwordResetTokenRepository.delete(resetToken);
+            throw new RuntimeException("Token expired");
+        }
+
+        User user = resetToken.getUser();
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        passwordResetTokenRepository.delete(resetToken);
+        
+        log.info("Password reset successful for user: {}", user.getEmail());
+    }
+
     private void populateCompanyRole(User user, LoginResponse response) {
         if (user.getMemberships() != null && !user.getMemberships().isEmpty()) {
             String role = user.getMemberships().get(0).getRole().getName();

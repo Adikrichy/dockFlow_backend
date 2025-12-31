@@ -73,4 +73,20 @@ public class AuthController {
         LoginResponse loginResponse = authService.refreshTokenFromCookie(request, response);
         return ResponseEntity.ok(loginResponse);
     }
+
+    @PostMapping("/forgot-password")
+    @Operation(summary = "Запрос сброса пароля",
+            description = "Отправляет на email пользователя ссылку для сброса пароля")
+    public ResponseEntity<Void> forgotPassword(@RequestBody org.aldousdev.dockflowbackend.auth.dto.request.ForgotPasswordRequest request) {
+        authService.forgotPassword(request.getEmail());
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(summary = "Сброс пароля",
+            description = "Устанавливает новый пароль, используя токен из письма")
+    public ResponseEntity<Void> resetPassword(@RequestBody org.aldousdev.dockflowbackend.auth.dto.request.ResetPasswordRequest request) {
+        authService.resetPassword(request.getToken(), request.getNewPassword());
+        return ResponseEntity.ok().build();
+    }
 }

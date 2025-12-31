@@ -87,10 +87,21 @@ public class JwtFilter extends OncePerRequestFilter {
             return null;
         }
 
+        // Пытаемся сначала найти токен с контекстом компании
+        String companyToken = Arrays.stream(cookies)
+                .filter(c -> "jwtWithCompany".equals(c.getName()))
+                .map(Cookie::getValue)
+                .findFirst()
+                .orElse(null);
+
+        if (companyToken != null && jwtService.isTokenValid(companyToken)) {
+            return companyToken;
+        }
+
+        // Если нет токена компании или он невалиден, берем обычный access token
         return Arrays.stream(cookies)
                 .filter(cookie ->
                         "accessToken".equals(cookie.getName()) ||
-                                "jwtWithCompany".equals(cookie.getName()) ||
                                 "JWT".equals(cookie.getName())
                 )
                 .map(Cookie::getValue)

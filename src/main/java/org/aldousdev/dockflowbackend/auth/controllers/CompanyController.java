@@ -169,23 +169,32 @@ public class CompanyController {
     @PostMapping("/roles")
     @Operation(summary = "Создать новую роль в компании", 
             description = "Создает пользовательскую роль в компании с заданным уровнем прав. " +
-                    "Доступно только для CEO компании")
+                    "Доступно только для пользователей с уровнем доступа 100 (например, CEO)")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Роль успешно создана",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateRoleResponse.class))),
             @ApiResponse(responseCode = "400", description = "Некорректные данные роли"),
             @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
-            @ApiResponse(responseCode = "403", description = "Только CEO может создавать роли")
+            @ApiResponse(responseCode = "403", description = "Недостаточно прав для создания роли")
     })
     public ResponseEntity<CreateRoleResponse> createRole(
             @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Данные для создания роли")
-            @RequestBody @Valid CreateRoleRequest request){
-        User currentUser = authService.getCurrentUser();
-        Company company = currentUser.getMemberships().stream()
-                .filter(m -> "CEO".equals(m.getRole().getName()))
-                .findFirst()
-                .map(Membership::getCompany)
-                .orElseThrow(()-> new RuntimeException("Only Ceo can create role"));
+            @RequestBody @Valid CreateRoleRequest request,
+            HttpServletRequest servletRequest){
+        
+        String token = getTokenFromRequest(servletRequest);
+        if (token == null || !jwtService.isTokenValid(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long companyId = jwtService.extractCompanyId(token);
+        Integer roleLevel = jwtService.extractCompanyRoleLevel(token);
+
+        if (roleLevel == null || roleLevel < 100) {
+            throw new RuntimeException("Only users with level 100 (CEO) can create roles");
+        }
+
+        Company company = Company.builder().id(companyId).build();
 
         CompanyRoleEntity role = CompanyRoleEntity.builder()
                 .name(request.getRoleName())
@@ -208,14 +217,20 @@ public class CompanyController {
 
     @GetMapping("/getAllRoles")
     @Operation(summary = "Получить все роли компании", 
-            description = "Возвращает список всех ролей (системных и пользовательских) в компании текущего пользователя")
+            description = "Возвращает список всех ролей в компании, в которую выполнен вход")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Список ролей успешно получен",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateRoleResponse.class))),
             @ApiResponse(responseCode = "401", description = "Требуется аутентификация")
     })
-    public ResponseEntity<List<CreateRoleResponse>> getAllRoles(){
-        List<CreateRoleResponse> roles = companyService.getAllRoles();
+    public ResponseEntity<List<CreateRoleResponse>> getAllRoles(HttpServletRequest request){
+        String token = getTokenFromRequest(request);
+        if (token == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long companyId = jwtService.extractCompanyId(token);
+        List<CreateRoleResponse> roles = companyService.getAllRoles(companyId);
         return ResponseEntity.status(HttpStatus.OK).body(roles);
     }
 
@@ -253,6 +268,36 @@ public class CompanyController {
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    @GetMapping("/members")
+    @Operation(summary = "Получить участников компании",
+            description = "Возвращает список всех участников в компании, в которую выполнен вход")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Список участников успешно получен"),
+            @ApiResponse(responseCode = "401", description = "Требуемая аутентификация")
+    })
+    public ResponseEntity<List<UserResponse>> getCompanyMembers(HttpServletRequest request) {
+        String token = getTokenFromRequest(request);
+        if (token == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long companyId = jwtService.extractCompanyId(token);
+        List<UserResponse> members = companyService.getCompanyMembers(companyId);
+        return ResponseEntity.ok(members);
+    }
+
+    private String getTokenFromRequest(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            return Arrays.stream(cookies)
+                    .filter(cookie -> "jwtWithCompany".equals(cookie.getName()))
+                    .map(Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
     }
 
     private void clearAuthCookies(HttpServletRequest request, HttpServletResponse response) {

@@ -8,4 +8,5 @@ import lombok.Setter;
 public class SendMessageRequest {
     private Long channelId;
     private String content;
+    private Long senderId;
 }

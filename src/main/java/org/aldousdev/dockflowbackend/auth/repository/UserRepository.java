@@ -14,4 +14,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmailWithMemberships(@Param("email") String email);
 
     Optional<User> findByRefreshToken(String refreshToken);
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.memberships m LEFT JOIN FETCH m.company LEFT JOIN FETCH m.role WHERE u.refreshToken = :refreshToken")
+    Optional<User> findByRefreshTokenWithMemberships(@Param("refreshToken") String refreshToken);
 }

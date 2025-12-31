@@ -229,16 +229,14 @@ public class CompanyServiceImpl implements CompanyService {
     }
 
     @Override
-    public List<CreateRoleResponse> getAllRoles(){
-
+    public List<CreateRoleResponse> getAllRoles(Long companyId){
         User currentUser = authService.getCurrentUser();
-        Company company = currentUser.getMemberships().stream()
-                .filter(m->"CEO".equals(m.getRole().getName()) || "Director".equals(m.getRole().getName()))
-                .findFirst()
-                .map(Membership::getCompany)
-                .orElseThrow(()-> new RuntimeException("No access to this company"));
+        
+        // Verify membership
+        membershipRepository.findByCompanyIdAndUserId(companyId, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("No access to this company"));
 
-        return companyRoleEntityRepository.findByCompanyId(company.getId()).stream()
+        return companyRoleEntityRepository.findByCompanyId(companyId).stream()
                 .map(role -> new CreateRoleResponse(
                         role.getId(),
                         role.getName(),
@@ -249,13 +247,15 @@ public class CompanyServiceImpl implements CompanyService {
     }
 
     @Override
-    public List<UserResponse> getCompanyMembers() {
+    public List<UserResponse> getCompanyMembers(Long companyId) {
         User currentUser = authService.getCurrentUser();
-        // Assuming current context or find first company. 
-        Company company = currentUser.getMemberships().stream()
-                .findFirst()
-                .map(Membership::getCompany)
-                .orElseThrow(() -> new RuntimeException("User is not a member of any company"));
+        
+        // Verify membership
+        membershipRepository.findByCompanyIdAndUserId(companyId, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("No access to this company"));
+
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new RuntimeException("Company not found"));
 
         return membershipRepository.findByCompany(company).stream()
                 .map(m -> {

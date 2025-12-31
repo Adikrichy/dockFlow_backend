@@ -11,9 +11,9 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 public interface MessageRepository extends JpaRepository<Message, Long> {
-    @Query("SELECT m FROM Message m LEFT JOIN FETCH m.sender WHERE m.channel = :channel ORDER BY m.createdAt DESC")
+    @Query("SELECT m FROM Message m LEFT JOIN FETCH m.sender WHERE m.channel = :channel ORDER BY m.createdAt ASC")
     List<Message> findByChannel(@Param("channel") ChatChannel channel);
 
-    @Query("SELECT m FROM Message m LEFT JOIN FETCH m.sender WHERE m.channel = :channel ORDER BY m.createdAt DESC")
+    @Query("SELECT m FROM Message m LEFT JOIN FETCH m.sender WHERE m.channel = :channel ORDER BY m.createdAt ASC")
     Page<Message> findByChannelPaginated(@Param("channel") ChatChannel channel, Pageable pageable);
 }
