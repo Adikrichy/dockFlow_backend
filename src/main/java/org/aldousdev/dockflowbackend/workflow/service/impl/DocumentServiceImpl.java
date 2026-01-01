@@ -4,7 +4,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.exceptions.CompanyNotFoundException;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import java.net.MalformedURLException;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
@@ -30,6 +34,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -135,6 +141,66 @@ public class DocumentServiceImpl implements DocumentService {
         catch(IOException exception){
             log.error("IO error during file upload for user: {}", currentUser.getEmail(), exception);
             throw new DocumentUploadException("Error saving file: " + exception.getMessage(), exception);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DocumentResponse getDocument(Long id) {
+        log.debug("Fetching document details for ID: {}", id);
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with ID: " + id));
+        return mapToResponse(document);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Document getDocumentEntity(Long id) {
+        return documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with ID: " + id));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DocumentResponse> getCompanyDocuments(Long companyId) {
+        log.debug("Fetching documents for company ID: {}", companyId);
+        return documentRepository.findByCompanyId(companyId).stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    private DocumentResponse mapToResponse(Document document) {
+        return DocumentResponse.builder()
+                .id(document.getId())
+                .originalFilename(document.getOriginalFilename())
+                .filePath(document.getFilePath())
+                .fileSize(document.getFileSize())
+                .uploadedAt(document.getUploadedAt())
+                .uploadedBy(document.getUploadedBy().getFirstName() + " " + document.getUploadedBy().getLastName())
+                .signed(document.getSigned())
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Resource downloadDocument(Long id) {
+        log.info("Downloading document: {}", id);
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with ID: " + id));
+        
+        try {
+            Path path = Paths.get(document.getFilePath());
+            Resource resource = new UrlResource(path.toUri());
+            
+            if (resource.exists() || resource.isReadable()) {
+                return resource;
+            } else {
+                log.error("File not found or not readable: {}", document.getFilePath());
+                throw new RuntimeException("Could not read file: " + document.getFilePath());
+            }
+        } catch (MalformedURLException e) {
+            log.error("Invalid file path: {}", document.getFilePath(), e);
+            throw new RuntimeException("Error: " + e.getMessage());
         }
     }
 }

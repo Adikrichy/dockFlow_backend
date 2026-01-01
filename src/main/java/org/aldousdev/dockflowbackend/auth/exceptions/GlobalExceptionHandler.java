@@ -54,6 +54,13 @@ public class GlobalExceptionHandler {
                  .body("Error: Failed to upload document");
      }
 
+     @ExceptionHandler(ResourceNotFoundException.class)
+     public ResponseEntity<?> handleResourceNotFoundException(ResourceNotFoundException ex){
+         log.warn("Resource not found: {}", ex.getMessage());
+         return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                 .body("Error: " + ex.getMessage());
+     }
+
      @ExceptionHandler(RuntimeException.class)
      public ResponseEntity<?> handleRuntimeException(RuntimeException ex){
          log.error("Unexpected error: {}", ex.getMessage(), ex);

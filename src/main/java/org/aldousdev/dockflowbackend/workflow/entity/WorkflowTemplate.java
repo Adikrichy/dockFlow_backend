@@ -36,8 +36,8 @@ public class WorkflowTemplate {
      *   <onReject stepOrder="2" targetStep="1" description="Return to manager for revision"/>
      * </workflow>
      */
-    @Column(columnDefinition = "TEXT", nullable = false)
-    private String workflowXml;
+    @Column(name = "steps_xml", columnDefinition = "TEXT", nullable = false)
+    private String stepsXml;
 
     /**
      * Company ID (хранится как Long, а не relationship для гибкости)

@@ -263,6 +263,42 @@ public class WorkflowController {
     }
 
     /**
+     * GET /api/workflow/company/{companyId}/tasks - получить все задачи компании для Kanban
+     */
+    @GetMapping("/company/{companyId}/tasks")
+    @RequiresRoleLevel(60) // Manager и выше
+    @Operation(summary = "Получить все задачи компании (для Kanban)", 
+            description = "Возвращает список всех задач всех workflow процессов компании. Испольуется для Kanban доски.")
+    public ResponseEntity<List<TaskResponse>> getCompanyTasks(@PathVariable Long companyId) {
+        log.info("Fetching all tasks for company: {}", companyId);
+        return ResponseEntity.ok(workflowService.getCompanyTasks(companyId));
+    }
+
+    /**
+     * POST /api/workflow/task/{taskId}/assign/{userId} - назначить задачу
+     */
+    @PostMapping("/task/{taskId}/assign/{userId}")
+    @RequiresRoleLevel(60)
+    @Operation(summary = "Назначить задачу пользователю", 
+            description = "Устанавливает исполнителя для задачи. Доступно менеджерам.")
+    public ResponseEntity<TaskResponse> assignTask(@PathVariable Long taskId, @PathVariable Long userId) {
+        return ResponseEntity.ok(workflowService.assignTask(taskId, userId));
+    }
+
+    /**
+     * PUT /api/workflow/task/{taskId}/status - обновить статус задачи
+     */
+    @PutMapping("/task/{taskId}/status")
+    @RequiresRoleLevel(60)
+    @Operation(summary = "Обновить статус задачи", 
+            description = "Меняет статус задачи (перемещение по Kanban колонкам).")
+    public ResponseEntity<TaskResponse> updateTaskStatus(
+            @PathVariable Long taskId, 
+            @RequestParam org.aldousdev.dockflowbackend.workflow.enums.TaskStatus status) {
+        return ResponseEntity.ok(workflowService.updateTaskStatus(taskId, status));
+    }
+
+    /**
      * POST /api/workflow/tasks/bulk-approve - массовое одобрение задач
      */
     @PostMapping("/tasks/bulk-approve")

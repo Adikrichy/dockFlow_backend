@@ -451,7 +451,7 @@ public class WorkflowEngine {
                 completedTask.getId(), wasApproved ? "approved" : "rejected");
 
         try {
-            String workflowXml = instance.getTemplate().getWorkflowXml();
+            String workflowXml = instance.getTemplate().getStepsXml();
             Integer nextStep = determineNextStep(instance, completedTask, wasApproved, workflowXml);
 
             if (nextStep == null) {

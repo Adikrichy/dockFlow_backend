@@ -25,4 +25,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Query("SELECT t FROM Task t WHERE t.status = :status AND t.requiredRoleName = :roleName")
     List<Task> findByStatusAndRequiredRoleName(@Param("status") TaskStatus status, 
                                                @Param("roleName") String roleName);
+
+    @Query("SELECT t FROM Task t JOIN t.workflowInstance w JOIN w.document d WHERE d.company.id = :companyId")
+    List<Task> findByCompanyId(@Param("companyId") Long companyId);
 }

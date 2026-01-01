@@ -2,6 +2,8 @@ package org.aldousdev.dockflowbackend.workflow.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
+import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
@@ -37,6 +39,7 @@ public class WorkflowService {
     private final WorkflowTemplateRepository templateRepository;
     private final WorkflowInstanceRepository instanceRepository;
     private final TaskRepository taskRepository;
+    private final UserRepository userRepository;
     private final DocumentRepository documentRepository;
     private final RoutingRuleRepository routingRuleRepository;
     private final WorkflowEngine workflowEngine;
@@ -78,7 +81,7 @@ public class WorkflowService {
         WorkflowTemplate template = WorkflowTemplate.builder()
                 .name(request.getName())
                 .description(request.getDescription())
-                .workflowXml(request.getStepsXml())
+                .stepsXml(request.getStepsXml())
                 .companyId(request.getCompanyId())
                 .createdBy(createdBy)
                 .isActive(true)
@@ -167,7 +170,7 @@ public class WorkflowService {
         instance = instanceRepository.save(instance);
 
         // Инициализируем workflow - создаем tasks согласно XML
-        workflowEngine.initializeWorkflow(instance, template.getWorkflowXml());
+        workflowEngine.initializeWorkflow(instance, template.getStepsXml());
         
         instance = instanceRepository.save(instance);
         log.info("Workflow instance created: {} with status: {}", instance.getId(), instance.getStatus());
@@ -188,7 +191,7 @@ public class WorkflowService {
         log.debug("Fetching workflow instance: {}", instanceId);
         
         WorkflowInstance instance = instanceRepository.findById(instanceId)
-                .orElseThrow(() -> new RuntimeException("Workflow instance not found: " + instanceId));
+                .orElseThrow(() -> new ResourceNotFoundException("Workflow instance not found: " + instanceId));
 
         return mapToInstanceResponse(instance);
     }
@@ -234,7 +237,7 @@ public class WorkflowService {
         log.info("Approving task: {} by user: {}", taskId, approvedBy.getEmail());
 
         Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Task not found: " + taskId));
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
 
         if (!workflowEngine.canUserApproveTask(task, approvedBy)) {
             log.warn("User {} does not have permission to approve task {}", 
@@ -260,7 +263,7 @@ public class WorkflowService {
         log.info("Rejecting task: {} by user: {}", taskId, rejectedBy.getEmail());
 
         Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new RuntimeException("Task not found: " + taskId));
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
 
         if (!workflowEngine.canUserApproveTask(task, rejectedBy)) {
             log.warn("User {} does not have permission to reject task {}", 
@@ -285,7 +288,7 @@ public class WorkflowService {
         log.debug("Fetching audit log for workflow instance: {}", instanceId);
 
         WorkflowInstance instance = instanceRepository.findById(instanceId)
-                .orElseThrow(() -> new RuntimeException("Workflow instance not found: " + instanceId));
+                .orElseThrow(() -> new ResourceNotFoundException("Workflow instance not found: " + instanceId));
 
         return auditService.getWorkflowHistory(instance).stream()
                 .map(log -> WorkflowAuditLogResponse.builder()
@@ -301,6 +304,58 @@ public class WorkflowService {
     }
 
     /**
+     * Получает все задачи компании для Kanban
+     */
+    public List<TaskResponse> getCompanyTasks(Long companyId) {
+        log.debug("Fetching all tasks for company: {}", companyId);
+        return taskRepository.findByCompanyId(companyId).stream()
+                .map(this::mapToTaskResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Назначает задачу пользователю
+     */
+    @Transactional
+    public TaskResponse assignTask(Long taskId, Long userId) {
+        log.info("Assigning task: {} to user: {}", taskId, userId);
+        
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
+        
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+        
+        task.setAssignedTo(user);
+        task = taskRepository.save(task);
+        
+        return mapToTaskResponse(task);
+    }
+
+    /**
+     * Обновляет статус задачи
+     */
+    @Transactional
+    public TaskResponse updateTaskStatus(Long taskId, TaskStatus status) {
+        log.info("Updating task: {} status to: {}", taskId, status);
+        
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
+        
+        task.setStatus(status);
+        if (status == TaskStatus.APPROVED) {
+            task.setCompletedAt(LocalDateTime.now());
+        }
+        
+        task = taskRepository.save(task);
+        
+        // If approved/rejected, we might need to trigger workflow engine next steps
+        // For now, let's just update the status as a simple Kanban action
+        
+        return mapToTaskResponse(task);
+    }
+
+    /**
      * Mapper: WorkflowTemplate -> Response
      */
     private WorkflowTemplateResponse mapToTemplateResponse(WorkflowTemplate template) {
@@ -308,7 +363,7 @@ public class WorkflowService {
                 .id(template.getId())
                 .name(template.getName())
                 .description(template.getDescription())
-                .stepsXml(template.getWorkflowXml())
+                .stepsXml(template.getStepsXml())
                 .companyId(template.getCompanyId())
                 .createdAt(template.getCreatedAt())
                 .updatedAt(template.getUpdatedAt())
