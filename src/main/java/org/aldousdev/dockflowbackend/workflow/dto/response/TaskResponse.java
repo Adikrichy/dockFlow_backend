@@ -19,4 +19,14 @@ public class TaskResponse {
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
     private String completedByName;
+
+    private DocumentInfo document;
+
+    @Getter
+    @Setter
+    @Builder
+    public static class DocumentInfo {
+        private Long id;
+        private String filename;
+    }
 }

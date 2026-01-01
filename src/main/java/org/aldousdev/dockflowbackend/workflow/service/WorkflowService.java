@@ -336,6 +336,7 @@ public class WorkflowService {
      * Mapper: Task -> Response
      */
     private TaskResponse mapToTaskResponse(Task task) {
+        Document document = task.getWorkflowInstance().getDocument();
         return TaskResponse.builder()
                 .id(task.getId())
                 .stepOrder(task.getStepOrder())
@@ -345,6 +346,10 @@ public class WorkflowService {
                 .createdAt(task.getCreatedAt())
                 .completedAt(task.getCompletedAt())
                 .comment(task.getComment())
+                .document(TaskResponse.DocumentInfo.builder()
+                        .id(document.getId())
+                        .filename(document.getOriginalFilename())
+                        .build())
                 .build();
     }
 }
