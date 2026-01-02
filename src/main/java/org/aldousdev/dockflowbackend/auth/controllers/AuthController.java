@@ -10,11 +10,20 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.dto.request.LoginRequest;
+import org.aldousdev.dockflowbackend.auth.dto.response.CompanyMembershipResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.LoginResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.UserContextResponse;
+import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
+import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.security.JWTService;
+import org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken;
 import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -22,6 +31,7 @@ import org.springframework.web.bind.annotation.*;
 @Tag(name = "Authentication", description = "Управление аутентификацией и авторизацией")
 public class AuthController {
     private final AuthServiceImpl authService;
+    private final JWTService jwtService;
 
     @PostMapping("/login")
     @Operation(summary = "Вход в систему", 
@@ -89,4 +99,64 @@ public class AuthController {
         authService.resetPassword(request.getToken(), request.getNewPassword());
         return ResponseEntity.ok().build();
     }
+
+    @GetMapping("/me")
+    public ResponseEntity<UserContextResponse> getMyContext(){
+        User user = authService.getCurrentUser();
+        
+        // Reload user with memberships to ensure they are loaded
+        User userWithMemberships = authService.getUserWithMemberships(user.getEmail());
+
+        // Debug: Log memberships count
+        System.out.println("User memberships count: " + (userWithMemberships.getMemberships() != null ? userWithMemberships.getMemberships().size() : 0));
+
+        List<CompanyMembershipResponse> companies = userWithMemberships.getMemberships() != null 
+            ? userWithMemberships.getMemberships().stream()
+                .map(m->CompanyMembershipResponse.builder()
+                        .companyId(m.getCompany().getId())
+                        .companyName(m.getCompany().getName())
+                        .description(m.getCompany().getDescription())
+                        .roleName(m.getRole().getName())
+                        .roleLevel(m.getRole().getLevel())
+                        .build())
+                .toList()
+            : java.util.Collections.emptyList();
+        
+        // Debug: Log companies count
+        System.out.println("Companies response count: " + companies.size());
+
+        CompanyMembershipResponse currentCompany = null;
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if(authentication instanceof JwtAuthenticationToken jwtAuth) {
+            String token = jwtAuth.getToken();
+            Long companyIdFromToken = jwtService.extractCompanyId(token);
+
+            if (companyIdFromToken != null) {
+                currentCompany = companies.stream()
+                        .filter(c -> c.getCompanyId().equals(companyIdFromToken))
+                        .findFirst()
+                        .orElse(null);
+            }
+        }
+
+            UserResponse userResponse = UserResponse.builder()
+                    .id(user.getId())
+                    .email(user.getEmail())
+                    .firstName(user.getFirstName())
+                    .lastName(user.getLastName())
+                    .userType(user.getUserType().name())
+                    .companyRole(currentCompany != null ? currentCompany.getRoleName() : null)
+                    .build();
+
+            UserContextResponse response = UserContextResponse.builder()
+                    .user(userResponse)
+                    .companies(companies)
+                    .currentCompany(currentCompany)
+                    .build();
+
+            return ResponseEntity.ok(response);
+
+    }
+
+
 }

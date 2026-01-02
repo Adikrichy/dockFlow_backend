@@ -39,6 +39,7 @@ public class CompanyServiceImpl implements CompanyService {
     private final UserRepository userRepository;
     private final JWTService jwtService;
     private final CompanyRoleEntityRepository companyRoleEntityRepository;
+    private final org.aldousdev.dockflowbackend.auth.service.DigitalSignatureService digitalSignatureService;
 
     @Override
     public CreateCompanyResponse create(CompanyRequest request){
@@ -72,6 +73,17 @@ public class CompanyServiceImpl implements CompanyService {
         currentUser.setUserType(UserType.COMPANY_OWNER);
         userRepository.save(currentUser);
 
+        // Always use default password for key encryption
+        // This ensures that key verification works without requiring password input
+        String keyPassword = "defaultPassword123";
+        
+        // Generate access key for the user (always with default password)
+        org.aldousdev.dockflowbackend.auth.entity.CompanyAccessKey accessKey = 
+            digitalSignatureService.generateAccessKey(currentUser, company, keyPassword);
+        
+        // Create key file bytes for download
+        byte[] keyFileBytes = digitalSignatureService.createKeyFile(accessKey, keyPassword);
+
         Map<String, Object> claims = new HashMap<>();
         claims.put("sub", currentUser.getEmail());
         claims.put("userId", currentUser.getId());
@@ -86,6 +98,8 @@ public class CompanyServiceImpl implements CompanyService {
         CreateCompanyResponse response = new CreateCompanyResponse();
         response.setCompany(companyResponse);
         response.setJwt(jwt);
+        // Encode key file bytes as Base64 for JSON response
+        response.setKeyFileBase64(java.util.Base64.getEncoder().encodeToString(keyFileBytes));
 
         return response;
 
@@ -160,11 +174,18 @@ public class CompanyServiceImpl implements CompanyService {
     }
 
     @Override
-    public String enterCompany(Long id){
+    public String enterCompany(Long id, byte[] keyFileBytes){
         User user = authService.getCurrentUser();
 
         Membership membership = membershipRepository.findByCompanyIdAndUserId(
                 id,user.getId()).orElseThrow(() -> new RuntimeException("No access to this company"));
+
+        // Verify the key file before granting access (password not needed - using default)
+        boolean isKeyValid = digitalSignatureService.verifyKeyFile(keyFileBytes, user.getId(), id);
+        
+        if (!isKeyValid) {
+            throw new RuntimeException("Invalid key file");
+        }
 
         Map<String, Object> claims = new HashMap<>();
         claims.put("sub", user.getEmail());
@@ -280,14 +301,14 @@ public class CompanyServiceImpl implements CompanyService {
 
     @Override
     @Transactional
-    public void joinCompany(Long companyId) {
+    public byte[] joinCompany(Long companyId) {
         User user = authService.getCurrentUser();
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException("Company not found"));
 
         // Check if already a member
         if (membershipRepository.findByCompanyIdAndUserId(companyId, user.getId()).isPresent()) {
-            return; // Already joined
+            throw new RuntimeException("Already a member of this company");
         }
 
         // Find default "Worker" role
@@ -309,5 +330,16 @@ public class CompanyServiceImpl implements CompanyService {
                 .build();
         
         membershipRepository.save(membership);
+        
+        // Always use default password for key encryption
+        // This ensures that key verification works without requiring password input
+        String finalKeyPassword = "defaultPassword123";
+        
+        // Generate access key for the new member (always with default password)
+        org.aldousdev.dockflowbackend.auth.entity.CompanyAccessKey accessKey = 
+            digitalSignatureService.generateAccessKey(user, company, finalKeyPassword);
+        
+        // Create and return key file bytes
+        return digitalSignatureService.createKeyFile(accessKey, finalKeyPassword);
     }
 }

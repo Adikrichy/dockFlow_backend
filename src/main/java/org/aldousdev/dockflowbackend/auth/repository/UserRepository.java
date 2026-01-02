@@ -10,7 +10,7 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
-    @Query("SELECT u FROM User u LEFT JOIN FETCH u.memberships m LEFT JOIN FETCH m.company LEFT JOIN FETCH m.role WHERE u.email = :email")
+    @Query("SELECT DISTINCT u FROM User u LEFT JOIN FETCH u.memberships m LEFT JOIN FETCH m.company LEFT JOIN FETCH m.role WHERE u.email = :email")
     Optional<User> findByEmailWithMemberships(@Param("email") String email);
 
     Optional<User> findByRefreshToken(String refreshToken);

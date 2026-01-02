@@ -19,9 +19,6 @@ import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
 import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
-import org.aldousdev.dockflowbackend.auth.entity.Membership;
-import org.aldousdev.dockflowbackend.auth.entity.User;
-import org.aldousdev.dockflowbackend.auth.enums.CompanyRole;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
 import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
 import org.aldousdev.dockflowbackend.auth.service.impls.CompanyServiceImpl;
@@ -46,7 +43,8 @@ public class CompanyController {
     @PostMapping("/create")
     @Operation(summary = "Создать новую компанию", 
             description = "Создает новую компанию и делает текущего пользователя CEO. " +
-                    "Обновляет JWT токен с информацией о компании")
+                    "Обновляет JWT токен с информацией о компании. " +
+                    "Возвращает PKCS#12 ключ для доступа к компании")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Компания успешно создана",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateCompanyResponse.class))),
@@ -69,6 +67,8 @@ public class CompanyController {
         jwtCookie.setMaxAge(3600 * 24);
         servletResponse.addCookie(jwtCookie);
 
+        // Return JSON response with company data and key file as base64
+        // Frontend will decode and download the file
         return ResponseEntity.ok(response);
     }
 
@@ -110,28 +110,38 @@ public class CompanyController {
 
     @PostMapping("/join/{companyId}")
     @Operation(summary = "Присоединиться к компании",
-            description = "Добавляет текущего пользователя в список участников компании с ролью по умолчанию (Worker)")
-    public ResponseEntity<Void> joinCompany(@PathVariable Long companyId) {
-        companyService.joinCompany(companyId);
-        return ResponseEntity.ok().build();
+            description = "Добавляет текущего пользователя в список участников компании с ролью по умолчанию (Worker). " +
+                    "Возвращает PKCS#12 ключ для последующего входа")
+    public ResponseEntity<byte[]> joinCompany(
+            @PathVariable Long companyId) {
+        // Always use default password for key encryption
+        byte[] keyFileBytes = companyService.joinCompany(companyId);
+        
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=company_" + companyId + "_key.p12")
+                .header("Content-Type", "application/x-pkcs12")
+                .body(keyFileBytes);
     }
 
     @PostMapping("/{companyId}/enter")
     @Operation(summary = "Войти в компанию", 
             description = "Переключает контекст пользователя на другую компанию, обновляя JWT токен. " +
-                    "Пользователь должен быть членом этой компании")
+                    "Требует загрузку PKCS#12 ключа для проверки доступа")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Успешно переключились на компанию"),
             @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
-            @ApiResponse(responseCode = "403", description = "У вас нет доступа к этой компании"),
+            @ApiResponse(responseCode = "403", description = "Неверный ключ или пароль"),
             @ApiResponse(responseCode = "404", description = "Компания не найдена")
     })
     public ResponseEntity<Void> enterCompany(
             @Parameter(description = "ID компании для входа", required = true)
-            @PathVariable Long companyId, 
+            @PathVariable Long companyId,
+            @RequestParam("keyFile") org.springframework.web.multipart.MultipartFile keyFile,
             HttpServletResponse response,
-            HttpServletRequest request){
-        String jwt = companyService.enterCompany(companyId);
+            HttpServletRequest request) throws java.io.IOException {
+        
+        byte[] keyFileBytes = keyFile.getBytes();
+        String jwt = companyService.enterCompany(companyId, keyFileBytes);
 
         clearAuthCookies(request, response);
 

@@ -126,6 +126,12 @@ public class AuthServiceImpl implements AuthService {
         throw new RuntimeException("Principal is not User instance");
     }
 
+    @Override
+    public User getUserWithMemberships(String email) {
+        return userRepository.findByEmailWithMemberships(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
     // === НОВЫЙ МЕТОД: refresh из cookie ===
     public LoginResponse refreshTokenFromCookie(HttpServletRequest request, HttpServletResponse response) {
         log.info("Attempting token refresh from cookie");
