@@ -3,6 +3,8 @@ package org.aldousdev.dockflowbackend.workflow.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
@@ -26,22 +28,9 @@ public class WorkflowTemplate {
 
     private String description;
 
-    /**
-     * XML-описание маршрута согласования с правилами маршрутизации.
-     * Пример структуры:
-     * <workflow>
-     *   <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
-     *   <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="true"/>
-     *   <step order="3" roleName="CEO" roleLevel="100" action="sign" parallel="false"/>
-     *   <onReject stepOrder="2" targetStep="1" description="Return to manager for revision"/>
-     * </workflow>
-     */
     @Column(name = "steps_xml", columnDefinition = "TEXT", nullable = false)
     private String stepsXml;
 
-    /**
-     * Company ID (хранится как Long, а не relationship для гибкости)
-     */
     @Column(name = "company_id", nullable = false)
     private Long companyId;
 
@@ -58,8 +47,37 @@ public class WorkflowTemplate {
     private LocalDateTime updatedAt;
 
     /**
-     * Правила маршрутизации для этого template
+     * Уровни ролей, которым разрешено запускать этот workflow
+     * Например: [60, 70, 100] = Manager, Director, CEO могут запускать
+     * По умолчанию: [100] = только CEO
      */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "allowed_role_levels", columnDefinition = "integer[]")
+    private Integer[] allowedRoleLevels;  // ✅ МАССИВ!
+
     @OneToMany(mappedBy = "template", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
     private List<RoutingRule> routingRules;
+
+    /**
+     * Проверяет может ли пользователь с данным уровнем роли запустить этот workflow
+     */
+    public boolean canStartWorkflow(Integer userRoleLevel) {
+        if (allowedRoleLevels == null || allowedRoleLevels.length == 0) {
+            // Если не указаны разрешения - разрешаем только CEO (100)
+            return userRoleLevel != null && userRoleLevel >= 100;
+        }
+
+        if (userRoleLevel == null) {
+            return false;
+        }
+
+        // Проверяем есть ли уровень пользователя в списке разрешенных
+        for (Integer allowedLevel : allowedRoleLevels) {
+            if (userRoleLevel >= allowedLevel) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

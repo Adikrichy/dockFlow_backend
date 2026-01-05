@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -78,6 +79,19 @@ public class WorkflowService {
         log.info("Creating workflow template: {} for company: {}", 
             request.getName(), request.getCompanyId());
 
+        Integer[] allowedRoleLevels;
+        if (request.getAllowedRoleLevels() != null && ! request.getAllowedRoleLevels().isEmpty()){
+            allowedRoleLevels = request.getAllowedRoleLevels().toArray(new Integer[0]);
+            log.info("Setting allowed role levels: {}", Arrays.toString(allowedRoleLevels));
+        }
+        else{
+            allowedRoleLevels = new Integer[]{100};
+            log.info("Using default allowed role level: [100] (CEO only)");
+        }
+
+
+
+
         WorkflowTemplate template = WorkflowTemplate.builder()
                 .name(request.getName())
                 .description(request.getDescription())
@@ -85,6 +99,7 @@ public class WorkflowService {
                 .companyId(request.getCompanyId())
                 .createdBy(createdBy)
                 .isActive(true)
+                .allowedRoleLevels(allowedRoleLevels)
                 .createdAt(LocalDateTime.now())
                 .build();
 
@@ -122,13 +137,35 @@ public class WorkflowService {
     /**
      * Получает все templates компании
      */
-    public List<WorkflowTemplateResponse> getCompanyTemplates(Long companyId) {
+    public List<WorkflowTemplateResponse> getCompanyTemplates(Long companyId, User currentUser) {
         log.debug("Fetching templates for company: {}", companyId);
+        Integer userRoleLevel = currentUser.getMemberships().stream()
+                .filter(m->companyId.equals(m.getCompany().getId()))
+                .map(m->m.getRole().getLevel())
+                .findFirst()
+                .orElse(null);
+
+
         
         return templateRepository.findByCompanyIdAndIsActive(companyId, true)
                 .stream()
-                .map(this::mapToTemplateResponse)
+                .map(template -> {
+                    String createdByName = template.getCreatedBy() != null
+                            ? template.getCreatedBy().getFirstName()
+                            : "System";
+                    boolean canStart = template.canStartWorkflow(userRoleLevel);
+                    return WorkflowTemplateResponse.builder()
+                            .id(template.getId())
+                            .name(template.getName())
+                            .description(template.getDescription())
+                            .createdByName(createdByName)
+                            .createdAt(template.getCreatedAt())
+                            .isActive(template.getIsActive())
+                            .canStart(canStart)
+                            .build();
+                })
                 .collect(Collectors.toList());
+
     }
 
     /**
@@ -215,18 +252,36 @@ public class WorkflowService {
     /**
      * Получает pending tasks для пользователя
      */
-    public List<TaskResponse> getUserPendingTasks(User user) {
-        log.debug("Fetching pending tasks for user: {}", user.getEmail());
+    public List<TaskResponse> getUserPendingTasks(User user, Long companyId) {
+        if (user == null || companyId == null) {
+            log.warn("getUserPendingTasks called with null user or companyId");
+            return List.of();
+        }
 
-        List<Task> tasks = taskRepository.findByStatusAndRequiredRoleName(
-                TaskStatus.PENDING, 
-                "MANAGER" // TODO: get actual role name for user
-        );
+        log.debug("Fetching pending tasks for user: {} in company: {}", user.getEmail(), companyId);
 
-        return tasks.stream()
-                .filter(task -> workflowEngine.canUserApproveTask(task, user))
+        // Получаем уровень роли пользователя именно в этой компании
+        Integer userLevel = user.getMemberships().stream()
+                .filter(m -> companyId.equals(m.getCompany().getId()))
+                .map(m -> m.getRole().getLevel())
+                .findFirst()
+                .orElse(0);
+
+        // Берём все PENDING задачи компании через правильный JOIN
+        List<Task> pendingTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
+
+        // Фильтруем по правилам
+        return pendingTasks.stream()
+                .filter(task -> {
+                    // 1. Прямое назначение
+                    if (task.getAssignedTo() != null) {
+                        return task.getAssignedTo().getId().equals(user.getId());
+                    }
+                    // 2. По уровню роли
+                    return userLevel >= task.getRequiredRoleLevel();
+                })
                 .map(this::mapToTaskResponse)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -367,6 +422,9 @@ public class WorkflowService {
                 .companyId(template.getCompanyId())
                 .createdAt(template.getCreatedAt())
                 .updatedAt(template.getUpdatedAt())
+                .allowedRoleLevels(template.getAllowedRoleLevels() != null?
+                        Arrays.asList(template.getAllowedRoleLevels())
+                        : List.of(100))
                 .build();
     }
 
@@ -406,5 +464,32 @@ public class WorkflowService {
                         .filename(document.getOriginalFilename())
                         .build())
                 .build();
+    }
+
+    @Transactional
+    public WorkflowTemplateResponse updateAllowedRoleLevels(Long templateId, List<Integer> allowedRoleLevels, User updatedBy){
+        log.info("Updating allowed role levels for template {} to {}", templateId, allowedRoleLevels);
+        WorkflowTemplate template = templateRepository.findById(templateId)
+                .orElseThrow(()-> new ResourceNotFoundException("Template not found: " + templateId));
+
+        if(!updatedBy.getId().equals(template.getCreatedBy().getId()) &&
+        !hasHighEnoughRole(updatedBy, template.getCompanyId(),100)){
+            throw new SecurityException("You are not allowed to update this template");
+        }
+
+        Integer[] newLevels = allowedRoleLevels.toArray(new Integer[0]);
+        template.setAllowedRoleLevels(newLevels);
+
+        template.setUpdatedAt(LocalDateTime.now());
+        template = templateRepository.save(template);
+
+        log.info("Permissions updated successfully");
+        return mapToTemplateResponse(template);
+    }
+
+    private boolean hasHighEnoughRole(User user, Long id, int requiredLevel){
+        return user.getMemberships().stream()
+                .filter(m->id.equals(m.getCompany().getId()))
+                .anyMatch(m->m.getRole().getLevel() >= requiredLevel);
     }
 }

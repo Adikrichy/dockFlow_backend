@@ -101,17 +101,17 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<UserContextResponse> getMyContext(){
+    public ResponseEntity<UserContextResponse> getMyContext(HttpServletRequest request){
         User user = authService.getCurrentUser();
-        
+
         // Reload user with memberships to ensure they are loaded
         User userWithMemberships = authService.getUserWithMemberships(user.getEmail());
 
         // Debug: Log memberships count
         System.out.println("User memberships count: " + (userWithMemberships.getMemberships() != null ? userWithMemberships.getMemberships().size() : 0));
 
-        List<CompanyMembershipResponse> companies = userWithMemberships.getMemberships() != null 
-            ? userWithMemberships.getMemberships().stream()
+        List<CompanyMembershipResponse> companies = userWithMemberships.getMemberships() != null
+                ? userWithMemberships.getMemberships().stream()
                 .map(m->CompanyMembershipResponse.builder()
                         .companyId(m.getCompany().getId())
                         .companyName(m.getCompany().getName())
@@ -120,16 +120,27 @@ public class AuthController {
                         .roleLevel(m.getRole().getLevel())
                         .build())
                 .toList()
-            : java.util.Collections.emptyList();
-        
+                : java.util.Collections.emptyList();
+
         // Debug: Log companies count
         System.out.println("Companies response count: " + companies.size());
 
+        // ============ ИСПРАВЛЕНИЕ: проверяем cookie jwtWithCompany ============
         CompanyMembershipResponse currentCompany = null;
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
-        if(authentication instanceof JwtAuthenticationToken jwtAuth) {
-            String token = jwtAuth.getToken();
-            Long companyIdFromToken = jwtService.extractCompanyId(token);
+
+        // Получаем cookie jwtWithCompany
+        String jwtWithCompany = null;
+        if (request.getCookies() != null) {
+            jwtWithCompany = java.util.Arrays.stream(request.getCookies())
+                    .filter(cookie -> "jwtWithCompany".equals(cookie.getName()))
+                    .map(jakarta.servlet.http.Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        // Если есть cookie jwtWithCompany - извлекаем companyId из НЕГО
+        if (jwtWithCompany != null && jwtService.isTokenValid(jwtWithCompany)) {
+            Long companyIdFromToken = jwtService.extractCompanyId(jwtWithCompany);
 
             if (companyIdFromToken != null) {
                 currentCompany = companies.stream()
@@ -138,24 +149,24 @@ public class AuthController {
                         .orElse(null);
             }
         }
+        // ============ КОНЕЦ ИСПРАВЛЕНИЯ ============
 
-            UserResponse userResponse = UserResponse.builder()
-                    .id(user.getId())
-                    .email(user.getEmail())
-                    .firstName(user.getFirstName())
-                    .lastName(user.getLastName())
-                    .userType(user.getUserType().name())
-                    .companyRole(currentCompany != null ? currentCompany.getRoleName() : null)
-                    .build();
+        UserResponse userResponse = UserResponse.builder()
+                .id(user.getId())
+                .email(user.getEmail())
+                .firstName(user.getFirstName())
+                .lastName(user.getLastName())
+                .userType(user.getUserType().name())
+                .companyRole(currentCompany != null ? currentCompany.getRoleName() : null)
+                .build();
 
-            UserContextResponse response = UserContextResponse.builder()
-                    .user(userResponse)
-                    .companies(companies)
-                    .currentCompany(currentCompany)
-                    .build();
+        UserContextResponse response = UserContextResponse.builder()
+                .user(userResponse)
+                .companies(companies)
+                .currentCompany(currentCompany)
+                .build();
 
-            return ResponseEntity.ok(response);
-
+        return ResponseEntity.ok(response);
     }
 
 

@@ -7,14 +7,18 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.service.UserService;
+import org.aldousdev.dockflowbackend.workflow.components.CanStartWorkflow;
 import org.aldousdev.dockflowbackend.workflow.dto.request.BulkTaskRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.TaskApprovalRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowPermissionRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.BulkOperationResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogResponse;
@@ -39,6 +43,7 @@ public class WorkflowController {
     private final WorkflowService workflowService;
     private final BulkWorkflowService bulkWorkflowService;
     private final UserService userService;
+    private final JWTService jwtService;
 
     /**
      * POST /api/workflow/template - создать новый workflow template
@@ -83,10 +88,13 @@ public class WorkflowController {
     })
     public ResponseEntity<List<WorkflowTemplateResponse>> getCompanyTemplates(
             @Parameter(description = "ID компании", required = true)
-            @PathVariable Long companyId) {
-        
+            @PathVariable Long companyId,
+            Authentication authentication) {
+
+        User user = userService.getUserByEmail(authentication.getName());
+
         log.info("Fetching templates for company: {}", companyId);
-        List<WorkflowTemplateResponse> templates = workflowService.getCompanyTemplates(companyId);
+        List<WorkflowTemplateResponse> templates = workflowService.getCompanyTemplates(companyId, user);
         return ResponseEntity.ok(templates);
     }
 
@@ -117,10 +125,10 @@ public class WorkflowController {
      * Body: { "documentId": 123 }
      */
     @PostMapping("/{templateId}/start")
-    @RequiresRoleLevel(10)
+    @CanStartWorkflow
     @Operation(summary = "Запустить workflow для документа", 
             description = "Инициирует новый workflow процесс для документа, используя указанный шаблон. " +
-                    "Создает workflow instance и первые tasks согласно шаблону")
+                    "Требуется разрешение на запуск этого workflow template.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Workflow успешно запущен",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkflowInstanceResponse.class))),
@@ -191,7 +199,7 @@ public class WorkflowController {
      */
     @GetMapping("/my-tasks")
     @RequiresRoleLevel(10)
-    @Operation(summary = "Получить мои ожидающие задачи", 
+    @Operation(summary = "Получить мои ожидающие задачи",
             description = "Возвращает все tasks, требующие одобрения от текущего пользователя. " +
                     "Это основной endpoint для личного dashboard утверждающего")
     @ApiResponses(value = {
@@ -200,11 +208,37 @@ public class WorkflowController {
             @ApiResponse(responseCode = "401", description = "Требуется аутентификация")
     })
     public ResponseEntity<List<TaskResponse>> getMyPendingTasks(
-            Authentication authentication) {
-        
+            Authentication authentication,
+            HttpServletRequest request) {
+
         log.info("Fetching pending tasks for user: {}", authentication.getName());
         User user = userService.getUserByEmail(authentication.getName());
-        List<TaskResponse> tasks = workflowService.getUserPendingTasks(user);
+
+        // ============ ИСПРАВЛЕНИЕ: читаем companyId из cookie jwtWithCompany ============
+        Long companyId = null;
+
+        // Получаем cookie jwtWithCompany
+        if (request.getCookies() != null) {
+            String jwtWithCompany = java.util.Arrays.stream(request.getCookies())
+                    .filter(cookie -> "jwtWithCompany".equals(cookie.getName()))
+                    .map(jakarta.servlet.http.Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+
+            // Если есть cookie - извлекаем companyId
+            if (jwtWithCompany != null && jwtService.isTokenValid(jwtWithCompany)) {
+                companyId = jwtService.extractCompanyId(jwtWithCompany);
+            }
+        }
+
+        // Если нет jwtWithCompany cookie - возвращаем пустой список
+        if (companyId == null) {
+            log.warn("No active company for user: {}", authentication.getName());
+            return ResponseEntity.ok(List.of());
+        }
+        // ============ КОНЕЦ ИСПРАВЛЕНИЯ ============
+
+        List<TaskResponse> tasks = workflowService.getUserPendingTasks(user, companyId);
         return ResponseEntity.ok(tasks);
     }
 
@@ -240,6 +274,36 @@ public class WorkflowController {
     }
 
     /**
+     * POST /api/workflow/task/{taskId}/reject - отклонить task
+     */
+    @PostMapping("/task/{taskId}/reject")
+    @RequiresRoleLevel(10)
+    @Operation(summary = "Отклонить задачу", 
+            description = "Отклоняет task и применяет правила маршрутизации для возврата на предыдущий шаг " +
+                    "или завершения workflow. Отправляет email уведомления и логирует действие в audit trail")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Task успешно отклонена",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = TaskResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Task уже одобрена или отклонена"),
+            @ApiResponse(responseCode = "401", description = "Требуется аутентификация"),
+            @ApiResponse(responseCode = "403", description = "У вас нет прав отклонить эту task"),
+            @ApiResponse(responseCode = "404", description = "Task не найдена")
+    })
+    public ResponseEntity<TaskResponse> rejectTask(
+            @Parameter(description = "ID task", required = true)
+            @PathVariable Long taskId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Комментарий к отклонению")
+            @RequestBody TaskApprovalRequest request,
+            Authentication authentication) {
+        
+        log.info("Rejecting task: {}", taskId);
+        User user = userService.getUserByEmail(authentication.getName());
+        
+        TaskResponse task = workflowService.rejectTask(taskId, user, request.getComment());
+        return ResponseEntity.ok(task);
+    }
+
+    /**
      * GET /api/workflow/instance/{instanceId}/audit - получить audit историю
      */
     @GetMapping("/instance/{instanceId}/audit")
@@ -266,7 +330,7 @@ public class WorkflowController {
      * GET /api/workflow/company/{companyId}/tasks - получить все задачи компании для Kanban
      */
     @GetMapping("/company/{companyId}/tasks")
-    @RequiresRoleLevel(60) // Manager и выше
+    @RequiresRoleLevel(10) // Manager и выше
     @Operation(summary = "Получить все задачи компании (для Kanban)", 
             description = "Возвращает список всех задач всех workflow процессов компании. Испольуется для Kanban доски.")
     public ResponseEntity<List<TaskResponse>> getCompanyTasks(@PathVariable Long companyId) {
@@ -366,5 +430,26 @@ public class WorkflowController {
             tasks, user, request.getComment());
 
         return ResponseEntity.ok(response);
+    }
+    @PatchMapping("/template/{templateId}/permissions")
+    @RequiresRoleLevel(100)
+    @Operation(summary = "Обновить разрешения на запуск workflow",
+            description = "Позволяет изменить список уровней ролей, которым разрешено запускать данный workflow шаблон. " +
+                    "Доступно создателю шаблона или CEO компании.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Разрешения успешно обновлены"),
+            @ApiResponse(responseCode = "403", description = "Нет прав на изменение разрешений"),
+            @ApiResponse(responseCode = "404", description = "Шаблон не найден")
+    })
+    public ResponseEntity<WorkflowTemplateResponse> updateWorkflowPermissions(
+            @PathVariable Long templateId,
+            @RequestBody UpdateWorkflowPermissionRequest request,
+            Authentication authentication
+            ){
+        User user = userService.getUserByEmail(authentication.getName());
+
+        WorkflowTemplateResponse update = workflowService.updateAllowedRoleLevels(templateId,
+                request.getAllowedRoleLevels(),user);
+        return ResponseEntity.ok(update);
     }
 }

@@ -6,8 +6,10 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -18,6 +20,7 @@ import java.util.function.Function;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class JWTService {
 
     @Value("${jwt.secret}")
@@ -167,11 +170,62 @@ public class JWTService {
     }
 
     public Integer extractCompanyRoleLevel(String token){
-        return extractClaim(token, claims -> claims.get("companyRoleLevel", Integer.class));
+        log.info("==== Extracting company Role Level ====");
+        Integer result = extractClaim(token, claims -> {
+            Object role = claims.get("companyRoleLevel");
+            log.info("Raw claim value {}", role);
+            log.info("Claim type {}", role != null ? role.getClass().getName(): "null");
+
+            if(role == null){
+                log.warn("CompanyRoleLevel is null");
+                return null;
+            }
+
+            if(role instanceof Integer){
+                log.info("CompanyRoleLevel is Integer");
+                return (Integer)role;
+            }
+
+            if(role instanceof Number){
+                Integer converted = ((Integer) role).intValue();
+                log.info("Converted Number to Integer {}", converted);
+                return converted;
+            }
+
+            if(role instanceof String){
+                try{
+                    Integer parser = Integer.parseInt((String) role);
+                    log.info("Converted String to Integer {}", parser);
+                    return parser;
+                }
+                catch(NumberFormatException e){
+                   log.error("Can not Parsing String {}", role);
+                   return null;
+                }
+            }
+
+            log.error("Unexpected type: {}", role.getClass().getName());
+            return null;
+        });
+
+        log.info("Final result: {}", result);
+        log.info("=== EXTRACTION COMPLETE ===");
+        return result;
     }
 
     public Long extractCompanyId(String token){
         return extractClaim(token, claims -> claims.get("companyId", Long.class));
+    }
+
+    public Long extractCompanyIdFromAuth(Authentication authentication){
+        if(authentication == null || !authentication.isAuthenticated()){
+            return null;
+        }
+
+        if(authentication.getPrincipal() instanceof String token){
+            return extractCompanyId(token);
+        }
+        return null;
     }
 
 }

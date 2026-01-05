@@ -40,6 +40,9 @@ public class WorkflowEngine {
     /**
      * Инициализирует workflow - создает tasks для всех шагов
      */
+    /**
+     * Инициализирует workflow - создает tasks ТОЛЬКО для первого шага
+     */
     @Transactional
     public void initializeWorkflow(WorkflowInstance workflowInstance, String workflowXml) {
         log.info("Initializing workflow for document: {}", workflowInstance.getDocument().getId());
@@ -49,28 +52,35 @@ public class WorkflowEngine {
 
             // Группируем шаги по порядку
             Map<Integer, List<WorkflowXmlParser.WorkflowStep>> groupedSteps =
-                steps.stream().collect(Collectors.groupingBy(WorkflowXmlParser.WorkflowStep::getOrder));
+                    steps.stream().collect(Collectors.groupingBy(WorkflowXmlParser.WorkflowStep::getOrder));
 
-            for (Map.Entry<Integer, List<WorkflowXmlParser.WorkflowStep>> entry : groupedSteps.entrySet()) {
-                Integer stepOrder = entry.getKey();
-                List<WorkflowXmlParser.WorkflowStep> stepGroup = entry.getValue();
+            // ✅ ИСПРАВЛЕНИЕ: Находим минимальный (первый) шаг
+            Integer firstStepOrder = groupedSteps.keySet().stream()
+                    .min(Integer::compareTo)
+                    .orElseThrow(() -> new RuntimeException("No steps found in workflow XML"));
 
-                // Проверяем, есть ли параллельные шаги
-                boolean hasParallelSteps = stepGroup.stream().anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
+            log.info("Creating tasks only for first step: {}", firstStepOrder);
 
-                if (hasParallelSteps) {
-                    // Создаем параллельные задачи для всех пользователей с соответствующими ролями
-                    createParallelTasks(workflowInstance, stepOrder, stepGroup);
-                } else {
-                    // Обычное последовательное выполнение
-                    for (WorkflowXmlParser.WorkflowStep step : stepGroup) {
-                        createTask(workflowInstance, stepOrder, step);
-                    }
+            // ✅ Создаем задачи ТОЛЬКО для первого шага
+            List<WorkflowXmlParser.WorkflowStep> firstStepGroup = groupedSteps.get(firstStepOrder);
+
+            // Проверяем, есть ли параллельные шаги
+            boolean hasParallelSteps = firstStepGroup.stream()
+                    .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
+
+            if (hasParallelSteps) {
+                // Создаем параллельные задачи для всех пользователей с соответствующими ролями
+                createParallelTasks(workflowInstance, firstStepOrder, firstStepGroup);
+            } else {
+                // Обычное последовательное выполнение
+                for (WorkflowXmlParser.WorkflowStep step : firstStepGroup) {
+                    createTask(workflowInstance, firstStepOrder, step);
                 }
             }
 
             workflowInstance.setStatus(WorkFlowStatus.IN_PROGRESS);
-            log.info("Workflow initialized with {} steps", groupedSteps.size());
+            log.info("Workflow initialized with first step {} (total {} steps in workflow)",
+                    firstStepOrder, groupedSteps.size());
 
         } catch (Exception e) {
             log.error("Error initializing workflow", e);
@@ -195,15 +205,23 @@ public class WorkflowEngine {
     public void approveTask(Task task, User approvedBy, String comment) {
         log.info("Approving task: {} by user: {}", task.getId(), approvedBy.getEmail());
 
+        // ✅ ИСПРАВЛЕНИЕ: Проверяем что задача еще PENDING
+        if (task.getStatus() != TaskStatus.PENDING) {
+            log.warn("Task {} is already {}, cannot approve", task.getId(), task.getStatus());
+            throw new RuntimeException("Task is already " + task.getStatus());
+        }
+
         task.setStatus(TaskStatus.APPROVED);
         task.setCompletedBy(approvedBy);
         task.setCompletedAt(LocalDateTime.now());
         task.setComment(comment);
         taskRepository.save(task);
 
+        log.info("Task {} marked as APPROVED", task.getId());
+
         // Логируем одобрение
         auditService.logTaskApproved(task, approvedBy, comment);
-        
+
         // Отправляем email уведомление
         emailNotificationService.notifyTaskApproved(task, approvedBy);
 
@@ -451,12 +469,34 @@ public class WorkflowEngine {
                 completedTask.getId(), wasApproved ? "approved" : "rejected");
 
         try {
+            // ✅ ИСПРАВЛЕНИЕ: Проверяем все ли задачи текущего шага завершены
+            List<Task> currentStepTasks = taskRepository.findByWorkflowInstance(instance).stream()
+                    .filter(t -> t.getStepOrder().equals(completedTask.getStepOrder()))
+                    .toList();
+
+            long pendingCount = currentStepTasks.stream()
+                    .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                    .count();
+
+            if (pendingCount > 0) {
+                log.info("Step {} still has {} PENDING tasks, waiting for completion",
+                        completedTask.getStepOrder(), pendingCount);
+                return; // Ждем пока все задачи текущего шага завершатся
+            }
+
+            log.info("All tasks for step {} completed, determining next step",
+                    completedTask.getStepOrder());
+
             String workflowXml = instance.getTemplate().getStepsXml();
             Integer nextStep = determineNextStep(instance, completedTask, wasApproved, workflowXml);
 
             if (nextStep == null) {
                 // Workflow завершен
                 completeWorkflow(instance, wasApproved);
+            } else if (nextStep.equals(completedTask.getStepOrder())) {
+                // ✅ ИСПРАВЛЕНИЕ: Возврат на тот же шаг - сбрасываем задачи
+                log.info("Returning to the same step {}, resetting tasks", nextStep);
+                returnToStep(instance, completedTask.getStepOrder(), nextStep);
             } else {
                 // Создаем задачи для следующего шага
                 createTasksForStep(instance, nextStep, workflowXml);
@@ -534,13 +574,36 @@ public class WorkflowEngine {
         log.info("Creating tasks for step {} in workflow {}", stepOrder, instance.getId());
 
         try {
+            // ✅ ИСПРАВЛЕНИЕ: Проверяем существующие задачи для этого шага
+            List<Task> existingTasks = taskRepository.findByWorkflowInstance(instance).stream()
+                    .filter(t -> t.getStepOrder().equals(stepOrder))
+                    .toList();
+
+            if (!existingTasks.isEmpty()) {
+                log.info("Found {} existing tasks for step {}, checking their status",
+                        existingTasks.size(), stepOrder);
+
+                // Если есть PENDING задачи - не создаем новые
+                boolean hasPendingTasks = existingTasks.stream()
+                        .anyMatch(t -> t.getStatus() == TaskStatus.PENDING);
+
+                if (hasPendingTasks) {
+                    log.info("PENDING tasks already exist for step {}, skipping creation", stepOrder);
+                    return;
+                }
+
+                // Если все задачи завершены (APPROVED/REJECTED/CANCELLED)
+                // Это может быть возврат на шаг - тогда создаем новые задачи
+                log.info("All existing tasks for step {} are completed, will create new tasks", stepOrder);
+            }
+
             WorkflowXmlParser.WorkflowDefinition definition =
-                WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
+                    WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
 
             // Находим шаги с указанным order
             List<WorkflowXmlParser.WorkflowStep> stepsForOrder = definition.getSteps().stream()
-                .filter(step -> step.getOrder().equals(stepOrder))
-                .toList();
+                    .filter(step -> step.getOrder().equals(stepOrder))
+                    .toList();
 
             if (stepsForOrder.isEmpty()) {
                 log.warn("No steps found for order {} in workflow {}", stepOrder, instance.getId());
@@ -548,7 +611,8 @@ public class WorkflowEngine {
             }
 
             // Проверяем, есть ли параллельные шаги
-            boolean hasParallelSteps = stepsForOrder.stream().anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
+            boolean hasParallelSteps = stepsForOrder.stream()
+                    .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
 
             if (hasParallelSteps) {
                 // Создаем параллельные задачи
@@ -559,6 +623,8 @@ public class WorkflowEngine {
                     createTask(instance, stepOrder, step);
                 }
             }
+
+            log.info("Successfully created tasks for step {}", stepOrder);
 
         } catch (Exception e) {
             log.error("Error creating tasks for step {}: {}", stepOrder, e.getMessage(), e);

@@ -28,4 +28,14 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     @Query("SELECT t FROM Task t JOIN t.workflowInstance w JOIN w.document d WHERE d.company.id = :companyId")
     List<Task> findByCompanyId(@Param("companyId") Long companyId);
+
+    // В TaskRepository
+
+    @Query("SELECT t FROM Task t " +
+            "JOIN t.workflowInstance wi " +
+            "JOIN wi.document d " +
+            "WHERE d.company.id = :companyId AND t.status = :status")
+    List<Task> findPendingTasksByCompanyId(
+            @Param("companyId") Long companyId,
+            @Param("status") TaskStatus status);
 }

@@ -215,6 +215,7 @@ public class AuthServiceImpl implements AuthService {
     private void clearCookies(HttpServletResponse response) {
         setCookie(response, "accessToken", "", 0);
         setCookie(response, "refreshToken", "", 0);
+        setCookie(response,"jwtWithCompany","",0);
     }
 
     private String getClientIP(jakarta.servlet.http.HttpServletRequest request) {
