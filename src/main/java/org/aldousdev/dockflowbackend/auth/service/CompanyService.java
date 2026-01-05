@@ -1,10 +1,8 @@
 package org.aldousdev.dockflowbackend.auth.service;
 
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
-import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
+import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
+import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.entity.User;
@@ -23,4 +21,6 @@ public interface CompanyService {
     CompanyResponse getCompanyById(Long id);
     List<UserResponse> getCompanyMembers(Long companyId);
     byte[] joinCompany(Long companyId);
+    UpdateRoleResponse updateRole(Long companyId, UpdateRoleRequest request);
+    void deleteRole(Long companyId);
 }

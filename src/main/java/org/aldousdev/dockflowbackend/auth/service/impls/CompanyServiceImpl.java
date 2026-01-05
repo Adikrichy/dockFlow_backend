@@ -3,15 +3,16 @@ package org.aldousdev.dockflowbackend.auth.service.impls;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
-import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
+import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
+import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.enums.UserType;
+import org.aldousdev.dockflowbackend.auth.exceptions.ForbiddenException;
+import org.aldousdev.dockflowbackend.auth.exceptions.BadRequestException;
+import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
 import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
@@ -341,5 +342,84 @@ public class CompanyServiceImpl implements CompanyService {
         
         // Create and return key file bytes
         return digitalSignatureService.createKeyFile(accessKey, finalKeyPassword);
+    }
+
+    @Override
+    @Transactional
+    @RequiresRoleLevel(100)
+    public UpdateRoleResponse updateRole(Long roleId, UpdateRoleRequest request) {
+        User currentUser = authService.getCurrentUser();
+
+        CompanyRoleEntity role = companyRoleEntityRepository.findById(roleId)
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found with id: " + roleId));
+
+        // Запрещаем редактировать системные роли
+        if (Boolean.TRUE.equals(role.getIsSystem())) {
+            throw new BadRequestException("Cannot modify system role");
+        }
+
+        // Проверяем, что пользователь состоит в компании этой роли
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(
+                        role.getCompany().getId(), currentUser.getId())
+                .orElseThrow(() -> new ForbiddenException("You do not have access to roles in this company"));
+
+        // Получаем текущий уровень пользователя
+        Integer currentUserLevel = membership.getRole().getLevel();
+
+        // Нельзя обновлять роль уровнем выше своего
+        if (request.getRoleLevel() > currentUserLevel) {
+            throw new ForbiddenException(
+                    "Cannot assign role level higher than your own (" + currentUserLevel + ")");
+        }
+
+        // Проверка на дубликат имени в компании (исключая текущую роль)
+        boolean nameExists = companyRoleEntityRepository.existsByNameAndCompanyIdAndIdNot(
+                request.getRoleName(), role.getCompany().getId(), roleId);
+
+        if (nameExists) {
+            throw new BadRequestException(
+                    "Role with name '" + request.getRoleName() + "' already exists in this company");
+        }
+
+        // Обновляем поля
+        role.setName(request.getRoleName());
+        role.setLevel(request.getRoleLevel());
+
+        CompanyRoleEntity updatedRole = companyRoleEntityRepository.save(role);
+
+        return new UpdateRoleResponse(
+                updatedRole.getId(),
+                updatedRole.getName(),
+                updatedRole.getLevel(),
+                updatedRole.getIsSystem()
+        );
+    }
+
+    @Override
+    @Transactional
+    @RequiresRoleLevel(100)
+    public void deleteRole(Long roleId) {
+        User currentUser = authService.getCurrentUser();
+
+        CompanyRoleEntity role = companyRoleEntityRepository.findById(roleId)
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found with id: " + roleId));
+
+        // Запрещаем удалять системные роли
+        if (Boolean.TRUE.equals(role.getIsSystem())) {
+            throw new BadRequestException("Cannot delete system role: " + role.getName());
+        }
+
+        // Проверка доступа к компании
+        membershipRepository.findByCompanyIdAndUserId(role.getCompany().getId(), currentUser.getId())
+                .orElseThrow(() -> new ForbiddenException("You do not have access to this company"));
+
+        // Нельзя удалить роль, если она назначена пользователям
+        boolean isAssigned = membershipRepository.existsByRoleId(roleId);
+        if (isAssigned) {
+            throw new BadRequestException(
+                    "Cannot delete role '" + role.getName() + "' because it is assigned to one or more members");
+        }
+
+        companyRoleEntityRepository.delete(role);
     }
 }

@@ -12,11 +12,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.CreateRoleRequest;
-import org.aldousdev.dockflowbackend.auth.dto.response.CompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateCompanyResponse;
-import org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse;
+import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
+import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
@@ -28,7 +28,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.List;
-import org.aldousdev.dockflowbackend.auth.dto.response.UserResponse;
 
 @RestController
 @RequiredArgsConstructor
@@ -298,6 +297,23 @@ public class CompanyController {
         return ResponseEntity.ok(members);
     }
 
+    @PutMapping("/roles/{roleId}")
+    @RequiresRoleLevel(100)
+    public ResponseEntity<UpdateRoleResponse> updateRole(
+            @PathVariable Long roleId,
+            @Valid @RequestBody UpdateRoleRequest request) {
+
+        UpdateRoleResponse response = companyService.updateRole(roleId, request);
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/roles/{roleId}")
+    @RequiresRoleLevel(100)
+    public ResponseEntity<Void> deleteRole(@PathVariable Long roleId) {
+        companyService.deleteRole(roleId);
+        return ResponseEntity.noContent().build(); // 204 No Content — стандарт для успешного удаления
+    }
+
     private String getTokenFromRequest(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies != null) {
@@ -328,6 +344,7 @@ public class CompanyController {
             }
         }
     }
+
 
 
 }

@@ -8,4 +8,5 @@ import java.util.List;
 public interface CompanyRoleEntityRepository extends JpaRepository<CompanyRoleEntity, Long> {
     List<CompanyRoleEntity> findByCompanyId(Long companyId);
     List<CompanyRoleEntity> findByIsSystemTrue();
+    boolean existsByNameAndCompanyIdAndIdNot(String name, Long companyId, Long excludedId);
 }

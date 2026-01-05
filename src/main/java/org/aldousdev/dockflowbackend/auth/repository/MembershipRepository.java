@@ -19,4 +19,5 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
                                                          @Param("roleName") String roleName,
                                                          @Param("minLevel") Integer minLevel);
     List<Membership> findByCompany(Company company);
+    boolean existsByRoleId(Long roleId);
 }
