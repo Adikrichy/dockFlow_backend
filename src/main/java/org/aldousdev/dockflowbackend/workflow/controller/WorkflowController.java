@@ -351,6 +351,35 @@ public class WorkflowController {
     }
 
     /**
+     * POST /api/workflow/task/{taskId}/claim - забрать задачу себе
+     */
+    @PostMapping("/task/{taskId}/claim")
+    @RequiresRoleLevel(10)
+    @Operation(summary = "Забрать задачу себе",
+            description = "Закрепляет задачу за текущим пользователем и меняет статус на IN_PROGRESS. " +
+                    "Требуется совпадение уровня роли.")
+    public ResponseEntity<TaskResponse> claimTask(
+            @PathVariable Long taskId,
+            Authentication authentication) {
+        log.info("Claiming task: {} by user: {}", taskId, authentication.getName());
+        User user = userService.getUserByEmail(authentication.getName());
+        return ResponseEntity.ok(workflowService.claimTask(taskId, user));
+    }
+
+    /**
+     * GET /api/workflow/company/{companyId}/roles - получить список ролей компании
+     */
+    @GetMapping("/company/{companyId}/roles")
+    @RequiresRoleLevel(10)
+    @Operation(summary = "Получить список ролей компании",
+            description = "Возвращает список всех ролей в компании. Доступно всем участникам.")
+    public ResponseEntity<List<org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse>> getCompanyRoles(
+            @PathVariable Long companyId) {
+        List<org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse> roles = workflowService.getCompanyRoles(companyId);
+        return ResponseEntity.ok(roles);
+    }
+
+    /**
      * PUT /api/workflow/task/{taskId}/status - обновить статус задачи
      */
     @PutMapping("/task/{taskId}/status")

@@ -202,8 +202,8 @@ public class WorkflowEngine {
     public void approveTask(Task task, User approvedBy, String comment) {
         log.info("Approving task: {} by user: {}", task.getId(), approvedBy.getEmail());
 
-        // Check that the task is still PENDING
-        if (task.getStatus() != TaskStatus.PENDING) {
+        // Check that the task is still PENDING or IN_PROGRESS
+        if (task.getStatus() != TaskStatus.PENDING && task.getStatus() != TaskStatus.IN_PROGRESS) {
             log.warn("Task {} is already {}, cannot approve", task.getId(), task.getStatus());
             throw new RuntimeException("Task is already " + task.getStatus());
         }
@@ -342,7 +342,7 @@ public class WorkflowEngine {
         
         // Find current step
         Integer currentStep = tasks.stream()
-                .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                .filter(t -> t.getStatus() == TaskStatus.PENDING || t.getStatus() == TaskStatus.IN_PROGRESS)
                 .map(Task::getStepOrder)
                 .min(Integer::compareTo)
                 .orElse(null);
@@ -437,15 +437,17 @@ public class WorkflowEngine {
             WorkflowXmlParser.WorkflowDefinition definition =
                 WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
 
-            // Find maximum order among steps
-            int maxOrder = definition.getSteps().stream()
-                .mapToInt(WorkflowXmlParser.WorkflowStep::getOrder)
-                .max()
-                .orElse(currentStep);
+            // Find all orders that are HIGHER than currentStep
+            List<Integer> higherOrders = definition.getSteps().stream()
+                .map(WorkflowXmlParser.WorkflowStep::getOrder)
+                .filter(order -> order > currentStep)
+                .distinct()
+                .sorted()
+                .toList();
 
-            // If current step is not last, return next
-            if (currentStep < maxOrder) {
-                return currentStep + 1;
+            // If found higher orders, return the smallest one (sequential next)
+            if (!higherOrders.isEmpty()) {
+                return higherOrders.get(0);
             }
 
             // This is the last step - complete workflow
@@ -471,13 +473,13 @@ public class WorkflowEngine {
                     .filter(t -> t.getStepOrder().equals(completedTask.getStepOrder()))
                     .toList();
 
-            long pendingCount = currentStepTasks.stream()
-                    .filter(t -> t.getStatus() == TaskStatus.PENDING)
+            long blockingCount = currentStepTasks.stream()
+                    .filter(t -> t.getStatus() == TaskStatus.PENDING || t.getStatus() == TaskStatus.IN_PROGRESS)
                     .count();
 
-            if (pendingCount > 0) {
-                log.info("Step {} still has {} PENDING tasks, waiting for completion",
-                        completedTask.getStepOrder(), pendingCount);
+            if (blockingCount > 0) {
+                log.info("Step {} still has {} blocking tasks (PENDING/IN_PROGRESS), waiting for completion",
+                        completedTask.getStepOrder(), blockingCount);
                 return; // Wait for all current step tasks to complete
             }
 
@@ -641,15 +643,18 @@ public class WorkflowEngine {
                 .findFirst()
                 .orElse(0);
 
-        boolean canApprove = userRole >= task.getRequiredRoleLevel();
-        // CEO with level 100 always can approve if they are in the same company
-        if (userRole == 100) {
-            canApprove = true;
-        }
+        // Strict role matching: user level must match task level exactly
+        // to avoid "higher roles doing lower roles work" unless claimed or delegated.
+        boolean levelMatches = userRole.equals(task.getRequiredRoleLevel());
         
-        log.debug("User {} role level {} can approve task requiring level {}: {}",
-            user.getEmail(), userRole, task.getRequiredRoleLevel(), canApprove);
+        // If task is already assigned to someone, ONLY that person can approve
+        if (task.getAssignedTo() != null) {
+            return task.getAssignedTo().getId().equals(user.getId());
+        }
 
-        return canApprove;
+        // CEO with level 100 should not be doing worker tasks unless specifically assigned.
+        // We remove the hardcoded 100 bypass to promote order.
+        
+        return levelMatches;
     }
 }

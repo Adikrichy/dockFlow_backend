@@ -19,6 +19,15 @@ public class TaskResponse {
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
     private String completedByName;
+    private UserInfo assignedTo;
+
+    @Getter
+    @Setter
+    @Builder
+    public static class UserInfo {
+        private Long id;
+        private String email;
+    }
 
     private DocumentInfo document;
 

@@ -3,8 +3,12 @@ package org.aldousdev.dockflowbackend.workflow.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
+import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
+import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
+import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.service.impls.CompanyServiceImpl;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
@@ -47,6 +51,9 @@ public class WorkflowService {
     private final WorkflowEngine workflowEngine;
     private final WorkflowEventBroadcaster eventBroadcaster;
     private final WorkflowAuditService auditService;
+    private final CompanyServiceImpl companyService;
+    private final CompanyRoleEntityRepository roleRepository;
+    private final MembershipRepository membershipRepository;
 
     /**
      * Initializes workflow for testing (delegates to WorkflowEngine)
@@ -266,21 +273,70 @@ public class WorkflowService {
                 .findFirst()
                 .orElse(0);
 
-        // Get all PENDING tasks for the company using the correct JOIN
-        List<Task> pendingTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
+        // Get all PENDING and IN_PROGRESS tasks for the company
+        List<Task> potentialTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
+        List<Task> inProgressTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.IN_PROGRESS);
+        
+        java.util.List<Task> allTasks = new java.util.ArrayList<>();
+        allTasks.addAll(potentialTasks);
+        allTasks.addAll(inProgressTasks);
 
-        // Filter by rules
-        return pendingTasks.stream()
+        // Filter by strict rules
+        return allTasks.stream()
                 .filter(task -> {
-                    // 1. Direct assignment
+                    // 1. If assigned, only that user sees it (unless completed)
                     if (task.getAssignedTo() != null) {
                         return task.getAssignedTo().getId().equals(user.getId());
                     }
-                    // 2. By role level
-                    return userLevel >= task.getRequiredRoleLevel();
+                    // 2. If not assigned, must match role level exactly
+                    return userLevel.equals(task.getRequiredRoleLevel());
                 })
                 .map(this::mapToTaskResponse)
                 .toList();
+    }
+
+    /**
+     * Claims a task - assigns it to a user and moves to IN_PROGRESS
+     */
+    @Transactional
+    public TaskResponse claimTask(Long taskId, User detachedUser) {
+        log.info("Claiming task: {} by user: {}", taskId, detachedUser.getEmail());
+        
+        // Reload user to ensure it is attached
+        User user = userRepository.findById(detachedUser.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + detachedUser.getId()));
+        
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
+        
+        if (task.getStatus() != TaskStatus.PENDING) {
+            throw new RuntimeException("Task is already taken or completed");
+        }
+
+        // Check role compatibility
+        // Explicitly fetch membership to ensure we have valid role data
+        Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId, user.getId())
+                .orElseThrow(() -> new RuntimeException("User is not a member of the company for this task"));
+        
+        Integer userLevel = membership.getRole().getLevel();
+
+        log.info("Claiming task {} (req level {}): User {} (level {})", 
+                taskId, task.getRequiredRoleLevel(), user.getEmail(), userLevel);
+
+        if (userLevel < task.getRequiredRoleLevel()) {
+            throw new RuntimeException("Role level mismatch: required " + 
+                task.getRequiredRoleLevel() + ", but user has " + userLevel);
+        }
+
+        task.setAssignedTo(user);
+        task.setStatus(TaskStatus.IN_PROGRESS);
+        task = taskRepository.save(task);
+
+        // Notify others that task is claimed
+        eventBroadcaster.broadcastTaskAssigned(companyId, taskId, user.getId());
+        
+        return mapToTaskResponse(task);
     }
 
     /**
@@ -396,6 +452,14 @@ public class WorkflowService {
         Task task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + taskId));
         
+        // Prevent modifying finalized tasks (Safety check)
+        if (task.getStatus() == TaskStatus.APPROVED || 
+            task.getStatus() == TaskStatus.REJECTED || 
+            task.getStatus() == TaskStatus.CANCELLED) {
+            log.warn("Attempt to modify finalized task {}: {} -> {}", taskId, task.getStatus(), status);
+            throw new RuntimeException("Cannot modify a finalized task (APPROVED/REJECTED/CANCELLED)");
+        }
+
         task.setStatus(status);
         if (status == TaskStatus.APPROVED) {
             task.setCompletedAt(LocalDateTime.now());
@@ -447,6 +511,14 @@ public class WorkflowService {
     /**
      * Mapper: Task -> Response
      */
+    /**
+     * Helper to get company roles (copied from companyService to avoid direct dependency if needed, 
+     * but we already have companyService)
+     */
+    public java.util.List<org.aldousdev.dockflowbackend.auth.dto.response.CreateRoleResponse> getCompanyRoles(Long companyId) {
+        return companyService.getAllRoles(companyId);
+    }
+
     private TaskResponse mapToTaskResponse(Task task) {
         Document document = task.getWorkflowInstance().getDocument();
         return TaskResponse.builder()
@@ -457,7 +529,12 @@ public class WorkflowService {
                 .status(task.getStatus().toString())
                 .createdAt(task.getCreatedAt())
                 .completedAt(task.getCompletedAt())
+                .completedByName(task.getCompletedBy() != null ? task.getCompletedBy().getFirstName() + " " + task.getCompletedBy().getLastName() : null)
                 .comment(task.getComment())
+                .assignedTo(task.getAssignedTo() != null ? TaskResponse.UserInfo.builder()
+                        .id(task.getAssignedTo().getId())
+                        .email(task.getAssignedTo().getEmail())
+                        .build() : null)
                 .document(TaskResponse.DocumentInfo.builder()
                         .id(document.getId())
                         .filename(document.getOriginalFilename())
