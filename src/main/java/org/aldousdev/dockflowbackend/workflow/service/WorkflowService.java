@@ -6,6 +6,7 @@ import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowInstanceResponse;
@@ -48,7 +49,7 @@ public class WorkflowService {
     private final WorkflowAuditService auditService;
 
     /**
-     * Инициализирует workflow для тестирования (делегирует WorkflowEngine)
+     * Initializes workflow for testing (delegates to WorkflowEngine)
      */
     @Transactional
     public void initializeWorkflow(WorkflowInstance instance, String workflowXml) {
@@ -56,7 +57,7 @@ public class WorkflowService {
     }
 
     /**
-     * Одобряет задачу для тестирования (делегирует WorkflowEngine)
+     * Approves task for testing (delegates to WorkflowEngine)
      */
     @Transactional
     public void approveTask(Task task, User user, String comment) {
@@ -64,7 +65,7 @@ public class WorkflowService {
     }
 
     /**
-     * Отклоняет задачу для тестирования (делегирует WorkflowEngine)
+     * Rejects task for testing (delegates to WorkflowEngine)
      */
     @Transactional
     public void rejectTask(Task task, User user, String comment) {
@@ -72,7 +73,7 @@ public class WorkflowService {
     }
 
     /**
-     * Создает новый workflow template с правилами маршрутизации
+     * Creates new workflow template with routing rules
      */
     @Transactional
     public WorkflowTemplateResponse createTemplate(CreateWorkflowTemplateRequest request, User createdBy) {
@@ -80,9 +81,13 @@ public class WorkflowService {
             request.getName(), request.getCompanyId());
 
         Integer[] allowedRoleLevels;
-        if (request.getAllowedRoleLevels() != null && ! request.getAllowedRoleLevels().isEmpty()){
-            allowedRoleLevels = request.getAllowedRoleLevels().toArray(new Integer[0]);
-            log.info("Setting allowed role levels: {}", Arrays.toString(allowedRoleLevels));
+        if (request.getAllowedRoleLevels() != null && !request.getAllowedRoleLevels().isEmpty()){
+            List<Integer> levels = new java.util.ArrayList<>(request.getAllowedRoleLevels());
+            if (!levels.contains(100)) {
+                levels.add(100);
+            }
+            allowedRoleLevels = levels.toArray(new Integer[0]);
+            log.info("Setting allowed role levels (CEO included): {}", Arrays.toString(allowedRoleLevels));
         }
         else{
             allowedRoleLevels = new Integer[]{100};
@@ -105,7 +110,7 @@ public class WorkflowService {
 
         template = templateRepository.save(template);
 
-        // Парсим и сохраняем правила маршрутизации
+        // Parse and save routing rules
         try {
             WorkflowXmlParser.WorkflowDefinition definition = 
                 WorkflowXmlParser.parseWorkflowDefinition(request.getStepsXml());
@@ -135,7 +140,7 @@ public class WorkflowService {
     }
 
     /**
-     * Получает все templates компании
+     * Gets all templates for a company
      */
     public List<WorkflowTemplateResponse> getCompanyTemplates(Long companyId, User currentUser) {
         log.debug("Fetching templates for company: {}", companyId);
@@ -150,26 +155,20 @@ public class WorkflowService {
         return templateRepository.findByCompanyIdAndIsActive(companyId, true)
                 .stream()
                 .map(template -> {
+                    WorkflowTemplateResponse response = mapToTemplateResponse(template);
                     String createdByName = template.getCreatedBy() != null
                             ? template.getCreatedBy().getFirstName()
                             : "System";
-                    boolean canStart = template.canStartWorkflow(userRoleLevel);
-                    return WorkflowTemplateResponse.builder()
-                            .id(template.getId())
-                            .name(template.getName())
-                            .description(template.getDescription())
-                            .createdByName(createdByName)
-                            .createdAt(template.getCreatedAt())
-                            .isActive(template.getIsActive())
-                            .canStart(canStart)
-                            .build();
+                    response.setCreatedByName(createdByName);
+                    response.setCanStart(template.canStartWorkflow(userRoleLevel));
+                    return response;
                 })
                 .collect(Collectors.toList());
 
     }
 
     /**
-     * Получает template по ID
+     * Retrieves a template by ID
      */
     public WorkflowTemplateResponse getTemplate(Long templateId) {
         log.debug("Fetching template: {}", templateId);
@@ -180,7 +179,7 @@ public class WorkflowService {
     }
 
     /**
-     * Запускает workflow для документа
+     * Starts a workflow for a document
      */
     @Transactional
     public WorkflowInstanceResponse startWorkflow(Long documentId, Long templateId, User initiatedBy) {
@@ -192,12 +191,12 @@ public class WorkflowService {
         WorkflowTemplate template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new RuntimeException("Template not found: " + templateId));
 
-        // Проверяем, что document принадлежит компании template
+        // Check that the document belongs to the template's company
         if (!document.getCompany().getId().equals(template.getCompanyId())) {
             throw new RuntimeException("Document and template belong to different companies");
         }
 
-        // Создаем workflow instance
+        // Create workflow instance
         WorkflowInstance instance = WorkflowInstance.builder()
                 .document(document)
                 .template(template)
@@ -206,23 +205,23 @@ public class WorkflowService {
 
         instance = instanceRepository.save(instance);
 
-        // Инициализируем workflow - создаем tasks согласно XML
+        // Initialize workflow - create tasks according to XML
         workflowEngine.initializeWorkflow(instance, template.getStepsXml());
         
         instance = instanceRepository.save(instance);
         log.info("Workflow instance created: {} with status: {}", instance.getId(), instance.getStatus());
 
-        // Логируем запуск workflow
+        // Log workflow start
         auditService.logWorkflowStarted(instance, initiatedBy);
 
-        // Отправляем уведомление
+        // Send notification
         eventBroadcaster.broadcastWorkflowStarted(document.getCompany().getId(), instance.getId(), documentId);
 
         return mapToInstanceResponse(instance);
     }
 
     /**
-     * Получает workflow instance по ID
+     * Retrieves a workflow instance by ID
      */
     public WorkflowInstanceResponse getWorkflowInstance(Long instanceId) {
         log.debug("Fetching workflow instance: {}", instanceId);
@@ -234,7 +233,7 @@ public class WorkflowService {
     }
 
     /**
-     * Получает текущие tasks для документа
+     * Retrieves current tasks for a document
      */
     public List<TaskResponse> getDocumentTasks(Long documentId) {
         log.debug("Fetching tasks for document: {}", documentId);
@@ -250,7 +249,7 @@ public class WorkflowService {
     }
 
     /**
-     * Получает pending tasks для пользователя
+     * Retrieves pending tasks for a user
      */
     public List<TaskResponse> getUserPendingTasks(User user, Long companyId) {
         if (user == null || companyId == null) {
@@ -260,24 +259,24 @@ public class WorkflowService {
 
         log.debug("Fetching pending tasks for user: {} in company: {}", user.getEmail(), companyId);
 
-        // Получаем уровень роли пользователя именно в этой компании
+        // Get the user's role level specifically in this company
         Integer userLevel = user.getMemberships().stream()
                 .filter(m -> companyId.equals(m.getCompany().getId()))
                 .map(m -> m.getRole().getLevel())
                 .findFirst()
                 .orElse(0);
 
-        // Берём все PENDING задачи компании через правильный JOIN
+        // Get all PENDING tasks for the company using the correct JOIN
         List<Task> pendingTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
 
-        // Фильтруем по правилам
+        // Filter by rules
         return pendingTasks.stream()
                 .filter(task -> {
-                    // 1. Прямое назначение
+                    // 1. Direct assignment
                     if (task.getAssignedTo() != null) {
                         return task.getAssignedTo().getId().equals(user.getId());
                     }
-                    // 2. По уровню роли
+                    // 2. By role level
                     return userLevel >= task.getRequiredRoleLevel();
                 })
                 .map(this::mapToTaskResponse)
@@ -285,7 +284,7 @@ public class WorkflowService {
     }
 
     /**
-     * Одобряет task
+     * Approves a task
      */
     @Transactional
     public TaskResponse approveTask(Long taskId, User approvedBy, String comment) {
@@ -303,7 +302,7 @@ public class WorkflowService {
         workflowEngine.approveTask(task, approvedBy, comment);
         task = taskRepository.findById(taskId).get();
 
-        // Отправляем уведомление
+        // Send notification
         Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
         eventBroadcaster.broadcastTaskApproved(companyId, taskId, approvedBy.getEmail());
 
@@ -311,7 +310,7 @@ public class WorkflowService {
     }
 
     /**
-     * Отклоняет task
+     * Rejects a task
      */
     @Transactional
     public TaskResponse rejectTask(Long taskId, User rejectedBy, String comment) {
@@ -329,7 +328,7 @@ public class WorkflowService {
         workflowEngine.rejectTask(task, rejectedBy, comment);
         task = taskRepository.findById(taskId).get();
 
-        // Отправляем уведомление
+        // Send notification
         Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
         eventBroadcaster.broadcastTaskRejected(companyId, taskId, rejectedBy.getEmail());
 
@@ -337,7 +336,7 @@ public class WorkflowService {
     }
 
     /**
-     * Получает audit историю для workflow instance
+     * Retrieves audit history for a workflow instance
      */
     public List<WorkflowAuditLogResponse> getWorkflowAuditLog(Long instanceId) {
         log.debug("Fetching audit log for workflow instance: {}", instanceId);
@@ -359,7 +358,7 @@ public class WorkflowService {
     }
 
     /**
-     * Получает все задачи компании для Kanban
+     * Retrieves all company tasks for Kanban
      */
     public List<TaskResponse> getCompanyTasks(Long companyId) {
         log.debug("Fetching all tasks for company: {}", companyId);
@@ -369,7 +368,7 @@ public class WorkflowService {
     }
 
     /**
-     * Назначает задачу пользователю
+     * Assigns a task to a user
      */
     @Transactional
     public TaskResponse assignTask(Long taskId, Long userId) {
@@ -388,7 +387,7 @@ public class WorkflowService {
     }
 
     /**
-     * Обновляет статус задачи
+     * Updates task status
      */
     @Transactional
     public TaskResponse updateTaskStatus(Long taskId, TaskStatus status) {
@@ -469,6 +468,12 @@ public class WorkflowService {
     @Transactional
     public WorkflowTemplateResponse updateAllowedRoleLevels(Long templateId, List<Integer> allowedRoleLevels, User updatedBy){
         log.info("Updating allowed role levels for template {} to {}", templateId, allowedRoleLevels);
+        
+        List<Integer> levels = new java.util.ArrayList<>(allowedRoleLevels);
+        if (!levels.contains(100)) {
+            levels.add(100);
+        }
+
         WorkflowTemplate template = templateRepository.findById(templateId)
                 .orElseThrow(()-> new ResourceNotFoundException("Template not found: " + templateId));
 
@@ -477,7 +482,7 @@ public class WorkflowService {
             throw new SecurityException("You are not allowed to update this template");
         }
 
-        Integer[] newLevels = allowedRoleLevels.toArray(new Integer[0]);
+        Integer[] newLevels = levels.toArray(new Integer[0]);
         template.setAllowedRoleLevels(newLevels);
 
         template.setUpdatedAt(LocalDateTime.now());
@@ -485,6 +490,86 @@ public class WorkflowService {
 
         log.info("Permissions updated successfully");
         return mapToTemplateResponse(template);
+    }
+
+    /**
+     * Updates workflow template
+     */
+    @Transactional
+    public WorkflowTemplateResponse updateTemplate(Long templateId, UpdateWorkflowTemplateRequest request, User updatedBy) {
+        log.info("Updating workflow template: {} by user: {}", templateId, updatedBy.getEmail());
+
+        WorkflowTemplate template = templateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("Template not found: " + templateId));
+
+        // Access check (creator or company admin)
+        if (!updatedBy.getId().equals(template.getCreatedBy().getId()) &&
+                !hasHighEnoughRole(updatedBy, template.getCompanyId(), 100)) {
+            throw new SecurityException("You are not allowed to update this template");
+        }
+
+        if (request.getName() != null) template.setName(request.getName());
+        if (request.getDescription() != null) template.setDescription(request.getDescription());
+        if (request.getIsActive() != null) template.setIsActive(request.getIsActive());
+
+        if (request.getStepsXml() != null) {
+            template.setStepsXml(request.getStepsXml());
+            // Re-create routing rules when XML changes
+            routingRuleRepository.deleteByTemplate(template);
+            try {
+                WorkflowXmlParser.WorkflowDefinition definition =
+                        WorkflowXmlParser.parseWorkflowDefinition(request.getStepsXml());
+
+                for (WorkflowXmlParser.RoutingRule rule : definition.getRoutingRules()) {
+                    RoutingRule routingRule = RoutingRule.builder()
+                            .template(template)
+                            .stepOrder(rule.getStepOrder())
+                            .routingType(RoutingType.fromXmlValue(rule.getRoutingType()))
+                            .targetStep(rule.getTargetStep())
+                            .condition(rule.getCondition())
+                            .description(rule.getDescription())
+                            .isOverrideAllowed(true)
+                            .build();
+                    routingRuleRepository.save(routingRule);
+                }
+            } catch (Exception e) {
+                log.warn("Could not parse routing rules during update: {}", e.getMessage());
+            }
+        }
+
+        if (request.getAllowedRoleLevels() != null) {
+            List<Integer> levels = new java.util.ArrayList<>(request.getAllowedRoleLevels());
+            if (!levels.contains(100)) {
+                levels.add(100);
+            }
+            template.setAllowedRoleLevels(levels.toArray(new Integer[0]));
+        }
+
+        template.setUpdatedAt(LocalDateTime.now());
+        template = templateRepository.save(template);
+
+        return mapToTemplateResponse(template);
+    }
+
+    /**
+     * Deletes workflow template (soft delete)
+     */
+    @Transactional
+    public void deleteTemplate(Long templateId, User deletedBy) {
+        log.info("Deleting workflow template: {} by user: {}", templateId, deletedBy.getEmail());
+
+        WorkflowTemplate template = templateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("Template not found: " + templateId));
+
+        // Access check
+        if (!deletedBy.getId().equals(template.getCreatedBy().getId()) &&
+                !hasHighEnoughRole(deletedBy, template.getCompanyId(), 100)) {
+            throw new SecurityException("You are not allowed to delete this template");
+        }
+
+        template.setIsActive(false);
+        template.setUpdatedAt(LocalDateTime.now());
+        templateRepository.save(template);
     }
 
     private boolean hasHighEnoughRole(User user, Long id, int requiredLevel){

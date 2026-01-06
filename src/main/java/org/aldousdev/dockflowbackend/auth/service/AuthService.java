@@ -12,4 +12,5 @@ public interface AuthService {
     User getUserWithMemberships(String email);
     void forgotPassword(String email);
     void resetPassword(String token, String newPassword);
+    void setCookie(HttpServletResponse response, String name, String value, int maxAge);
 }

@@ -26,7 +26,7 @@ public class EmailService {
     private String appUrl;
 
     /**
-     * Отправляет простое текстовое письмо
+     * Sends a simple text email
      */
     public void sendSimpleEmail(String to, String subject, String body) {
         try {
@@ -44,7 +44,7 @@ public class EmailService {
     }
 
     /**
-     * Отправляет HTML письмо
+     * Sends an HTML email
      */
     public void sendHtmlEmail(String to, String subject, String htmlBody) {
         try {
@@ -64,55 +64,55 @@ public class EmailService {
     }
 
     /**
-     * Отправляет письмо о создании новой task
+     * Sends an email about a new task creation
      */
     public void sendTaskCreatedEmail(String userEmail, String userName, String roleName, 
                                      String documentName, Long taskId, Long workflowId) {
-        String subject = "Новая задача на одобрение: " + documentName;
+        String subject = "New task for approval: " + documentName;
         String body = buildTaskCreatedEmailBody(userName, roleName, documentName, taskId, workflowId);
         sendHtmlEmail(userEmail, subject, body);
     }
 
     /**
-     * Отправляет письмо об одобрении task
+     * Sends an email about task approval
      */
     public void sendTaskApprovedEmail(String userEmail, String approvedBy, String documentName, 
                                      Integer stepOrder, Integer totalSteps) {
-        String subject = "Задача одобрена: " + documentName;
+        String subject = "Task approved: " + documentName;
         String body = buildTaskApprovedEmailBody(approvedBy, documentName, stepOrder, totalSteps);
         sendHtmlEmail(userEmail, subject, body);
     }
 
     /**
-     * Отправляет письмо об отклонении task
+     * Sends an email about task rejection
      */
     public void sendTaskRejectedEmail(String userEmail, String rejectedBy, String documentName, 
                                      String reason, Integer returnToStep) {
-        String subject = "Задача отклонена: " + documentName;
+        String subject = "Task rejected: " + documentName;
         String body = buildTaskRejectedEmailBody(rejectedBy, documentName, reason, returnToStep);
         sendHtmlEmail(userEmail, subject, body);
     }
 
     /**
-     * Отправляет письмо о завершении workflow
+     * Sends an email about workflow completion
      */
     public void sendWorkflowCompletedEmail(String userEmail, String documentName, String initiatedBy) {
-        String subject = "Документ одобрен: " + documentName;
+        String subject = "Document approved: " + documentName;
         String body = buildWorkflowCompletedEmailBody(documentName, initiatedBy);
         sendHtmlEmail(userEmail, subject, body);
     }
 
     /**
-     * Отправляет письмо об отклонении workflow
+     * Sends an email about workflow rejection
      */
     public void sendWorkflowRejectedEmail(String userEmail, String documentName, String reason) {
-        String subject = "Документ отклонен: " + documentName;
+        String subject = "Document rejected: " + documentName;
         String body = buildWorkflowRejectedEmailBody(documentName, reason);
         sendHtmlEmail(userEmail, subject, body);
     }
 
     /**
-     * Строит HTML для письма о создании task
+     * Builds HTML for task creation email
      */
     private String buildTaskCreatedEmailBody(String userName, String roleName, String documentName, 
                                             Long taskId, Long workflowId) {
@@ -133,18 +133,18 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>Новая задача на одобрение</h1>
+                            <h1>New Task for Approval</h1>
                         </div>
                         <div class="content">
-                            <p>Привет, %s!</p>
-                            <p>У вас есть новая задача на одобрение документа:</p>
+                            <p>Hello, %s!</p>
+                            <p>You have a new task for document approval:</p>
                             <h2>%s</h2>
-                            <p><strong>Роль:</strong> %s</p>
-                            <p><strong>Тип действия:</strong> Требуется ваше одобрение</p>
-                            <a href="%s/workflow/%d/task/%d" class="button">Перейти к задаче</a>
+                            <p><strong>Role:</strong> %s</p>
+                            <p><strong>Action Type:</strong> Approval required</p>
+                            <a href="%s/workflow/%d/task/%d" class="button">Go to Task</a>
                         </div>
                         <div class="footer">
-                            <p>© 2024 DocFlow. Все права защищены.</p>
+                            <p>© 2024 DocFlow. All rights reserved.</p>
                         </div>
                     </div>
                 </body>
@@ -153,11 +153,11 @@ public class EmailService {
     }
 
     /**
-     * Строит HTML для письма об одобрении task
+     * Builds HTML for task approval email
      */
     private String buildTaskApprovedEmailBody(String approvedBy, String documentName, 
                                              Integer stepOrder, Integer totalSteps) {
-        String progress = stepOrder + " из " + totalSteps;
+        String progress = stepOrder + " of " + totalSteps;
         return String.format("""
                 <!DOCTYPE html>
                 <html>
@@ -176,18 +176,18 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>Задача одобрена ✓</h1>
+                            <h1>Task Approved ✓</h1>
                         </div>
                         <div class="content">
-                            <p>Документ <strong>%s</strong> был одобрен пользователем <strong>%s</strong>.</p>
-                            <p><strong>Прогресс согласования:</strong></p>
+                            <p>Document <strong>%s</strong> has been approved by user <strong>%s</strong>.</p>
+                            <p><strong>Approval Progress:</strong></p>
                             <div class="progress">
                                 <div class="progress-bar"></div>
                             </div>
-                            <p>%s шагов завершено</p>
+                            <p>%s steps completed</p>
                         </div>
                         <div class="footer">
-                            <p>© 2024 DocFlow. Все права защищены.</p>
+                            <p>© 2024 DocFlow. All rights reserved.</p>
                         </div>
                     </div>
                 </body>
@@ -196,13 +196,13 @@ public class EmailService {
     }
 
     /**
-     * Строит HTML для письма об отклонении task
+     * Builds HTML for task rejection email
      */
     private String buildTaskRejectedEmailBody(String rejectedBy, String documentName, 
                                              String reason, Integer returnToStep) {
         String returnInfo = returnToStep != null 
-            ? "Документ был отправлен на пересмотр на шаг " + returnToStep
-            : "Документ был отклонен полностью";
+            ? "The document has been returned for review to step " + returnToStep
+            : "The document has been rejected completely";
             
         return String.format("""
                 <!DOCTYPE html>
@@ -221,18 +221,18 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>Задача отклонена ✗</h1>
+                            <h1>Task Rejected ✗</h1>
                         </div>
                         <div class="content">
-                            <p>Документ <strong>%s</strong> был отклонен пользователем <strong>%s</strong>.</p>
+                            <p>Document <strong>%s</strong> has been rejected by user <strong>%s</strong>.</p>
                             <p><strong>%s</strong></p>
                             <div class="reason">
-                                <p><strong>Комментарий:</strong></p>
+                                <p><strong>Comment:</strong></p>
                                 <p>%s</p>
                             </div>
                         </div>
                         <div class="footer">
-                            <p>© 2024 DocFlow. Все права защищены.</p>
+                            <p>© 2024 DocFlow. All rights reserved.</p>
                         </div>
                     </div>
                 </body>
@@ -241,7 +241,7 @@ public class EmailService {
     }
 
     /**
-     * Строит HTML для письма о завершении workflow
+     * Builds HTML for workflow completion email
      */
     private String buildWorkflowCompletedEmailBody(String documentName, String initiatedBy) {
         return String.format("""
@@ -261,15 +261,15 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>Документ успешно одобрен</h1>
+                            <h1>Document Successfully Approved</h1>
                         </div>
                         <div class="content">
                             <div class="success">✓</div>
-                            <p>Все согласования для документа <strong>%s</strong> (инициирован %s) завершены.</p>
-                            <p>Документ готов к использованию.</p>
+                            <p>All approvals for document <strong>%s</strong> (initiated by %s) are complete.</p>
+                            <p>The document is ready for use.</p>
                         </div>
                         <div class="footer">
-                            <p>© 2024 DocFlow. Все права защищены.</p>
+                            <p>© 2024 DocFlow. All rights reserved.</p>
                         </div>
                     </div>
                 </body>
@@ -278,7 +278,7 @@ public class EmailService {
     }
 
     /**
-     * Строит HTML для письма об отклонении workflow
+     * Builds HTML for workflow rejection email
      */
     private String buildWorkflowRejectedEmailBody(String documentName, String reason) {
         return String.format("""
@@ -298,16 +298,16 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>Документ отклонен</h1>
+                            <h1>Document Rejected</h1>
                         </div>
                         <div class="content">
                             <div class="rejected">✗</div>
-                            <p>Согласование документа <strong>%s</strong> было отклонено.</p>
-                            <p><strong>Причина:</strong></p>
+                            <p>Approval for document <strong>%s</strong> was rejected.</p>
+                            <p><strong>Reason:</strong></p>
                             <p>%s</p>
                         </div>
                         <div class="footer">
-                            <p>© 2024 DocFlow. Все права защищены.</p>
+                            <p>© 2024 DocFlow. All rights reserved.</p>
                         </div>
                     </div>
                 </body>

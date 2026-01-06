@@ -61,7 +61,7 @@ public class AuthServiceImpl implements AuthService {
             throw new UserNotActiveException("User is locked");
         }
 
-        // Генерация токенов
+        // Token generation
         String accessToken;
         if (user.getMemberships() != null && !user.getMemberships().isEmpty()) {
             var membership = user.getMemberships().get(0);
@@ -77,14 +77,14 @@ public class AuthServiceImpl implements AuthService {
         String refreshToken = jwtService.generateRefreshToken(user);
         LocalDateTime refreshExpiry = jwtService.getRefreshTokenExpiry(refreshToken);
 
-        // Сохраняем refresh token в БД
+        // Save refresh token to DB
         user.setRefreshToken(refreshToken);
         user.setRefreshTokenExpiry(refreshExpiry);
         userRepository.save(user);
 
-        // Устанавливаем две HttpOnly cookie
-        setCookie(response, "accessToken", accessToken, 3600);            // 1 час
-        setCookie(response, "refreshToken", refreshToken, 7 * 24 * 3600); // 7 дней
+        // Set two Http Only cookies
+        setCookie(response, "accessToken", accessToken, 3600);            // 1 hour
+        setCookie(response, "refreshToken", refreshToken, 7 * 24 * 3600); // 7 days
 
         securityAuditService.logLoginSuccess(user, clientIP, userAgent);
         log.info("User successfully logged in: {}", request.getEmail());
@@ -105,7 +105,7 @@ public class AuthServiceImpl implements AuthService {
             userRepository.save(currentUser);
             securityAuditService.logLogout(currentUser, "unknown", "unknown");
         } catch (Exception e) {
-            // Если пользователь уже не авторизован — просто игнорируем
+            // If the user is no longer authorized - simply ignore
             log.debug("No authenticated user during logout");
         }
 
@@ -132,7 +132,7 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
-    // === НОВЫЙ МЕТОД: refresh из cookie ===
+    // === NEW METHOD: refresh from cookie ===
     public LoginResponse refreshTokenFromCookie(HttpServletRequest request, HttpServletResponse response) {
         log.info("Attempting token refresh from cookie");
 
@@ -158,7 +158,7 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("Invalid or expired refresh token");
         }
 
-        // Новый access token
+        // New access token
         String newAccessToken;
         if (user.getMemberships() != null && !user.getMemberships().isEmpty()) {
             var membership = user.getMemberships().get(0);
@@ -171,7 +171,7 @@ public class AuthServiceImpl implements AuthService {
             newAccessToken = jwtService.generateToken(user);
         }
 
-        // Ротация refresh token (безопасность)
+        // Refresh token rotation (security)
         String newRefreshToken = jwtService.generateRefreshToken(user);
         LocalDateTime newRefreshExpiry = jwtService.getRefreshTokenExpiry(newRefreshToken);
 
@@ -179,7 +179,7 @@ public class AuthServiceImpl implements AuthService {
         user.setRefreshTokenExpiry(newRefreshExpiry);
         userRepository.save(user);
 
-        // Обновляем cookie
+        // Update cookies
         setCookie(response, "accessToken", newAccessToken, 3600);
         setCookie(response, "refreshToken", newRefreshToken, 7 * 24 * 3600);
 
@@ -191,14 +191,15 @@ public class AuthServiceImpl implements AuthService {
         return loginResponse;
     }
 
-    // === УДАЛИ СТАРЫЙ МЕТОД refreshToken(String, HttpServletResponse) ===
-    // Он больше не нужен — удали его полностью, чтобы не было дублирования
+    // === REMOVED OLD METHOD: refreshToken(String, HttpServletResponse) ===
+    // It is no longer needed - removed to avoid duplication
 
-    // === Вспомогательные методы ===
-    private void setCookie(HttpServletResponse response, String name, String value, int maxAge) {
+    // === Helper methods ===
+    @Override
+    public void setCookie(HttpServletResponse response, String name, String value, int maxAge) {
         Cookie cookie = new Cookie(name, value);
         cookie.setHttpOnly(true);
-        cookie.setSecure(false); // false на localhost, в проде — true (или через @Value)
+        cookie.setSecure(false); // false on localhost, true in production (or via @Value)
         cookie.setPath("/");
         cookie.setMaxAge(maxAge);
         response.addCookie(cookie);

@@ -38,10 +38,7 @@ public class WorkflowEngine {
     private final EmailNotificationService emailNotificationService;
 
     /**
-     * Инициализирует workflow - создает tasks для всех шагов
-     */
-    /**
-     * Инициализирует workflow - создает tasks ТОЛЬКО для первого шага
+     * Initializes workflow - creates tasks ONLY for the first step
      */
     @Transactional
     public void initializeWorkflow(WorkflowInstance workflowInstance, String workflowXml) {
@@ -50,29 +47,29 @@ public class WorkflowEngine {
         try {
             List<WorkflowXmlParser.WorkflowStep> steps = WorkflowXmlParser.parseWorkflowSteps(workflowXml);
 
-            // Группируем шаги по порядку
+            // Group steps by order
             Map<Integer, List<WorkflowXmlParser.WorkflowStep>> groupedSteps =
                     steps.stream().collect(Collectors.groupingBy(WorkflowXmlParser.WorkflowStep::getOrder));
 
-            // ✅ ИСПРАВЛЕНИЕ: Находим минимальный (первый) шаг
+            // Finding the minimum (first) step
             Integer firstStepOrder = groupedSteps.keySet().stream()
                     .min(Integer::compareTo)
                     .orElseThrow(() -> new RuntimeException("No steps found in workflow XML"));
 
             log.info("Creating tasks only for first step: {}", firstStepOrder);
 
-            // ✅ Создаем задачи ТОЛЬКО для первого шага
+            // Create tasks ONLY for the first step
             List<WorkflowXmlParser.WorkflowStep> firstStepGroup = groupedSteps.get(firstStepOrder);
 
-            // Проверяем, есть ли параллельные шаги
+            // Check if there are parallel steps
             boolean hasParallelSteps = firstStepGroup.stream()
                     .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
 
             if (hasParallelSteps) {
-                // Создаем параллельные задачи для всех пользователей с соответствующими ролями
+                // Create parallel tasks for all users with corresponding roles
                 createParallelTasks(workflowInstance, firstStepOrder, firstStepGroup);
             } else {
-                // Обычное последовательное выполнение
+                // Normal sequential execution
                 for (WorkflowXmlParser.WorkflowStep step : firstStepGroup) {
                     createTask(workflowInstance, firstStepOrder, step);
                 }
@@ -90,7 +87,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * Создает task для конкретного шага
+     * Creates a task for a specific step
      */
     private void createTask(WorkflowInstance instance, Integer stepOrder,
                            WorkflowXmlParser.WorkflowStep step) {
@@ -107,38 +104,38 @@ public class WorkflowEngine {
 
         taskRepository.save(task);
 
-        // Логируем создание task
+        // Log task creation
         auditService.logTaskCreated(task, step.getRoleName());
 
-        // Отправляем уведомление о создании новой task
+        // Send notification about new task creation
         Long companyId = instance.getDocument().getCompany().getId();
         eventBroadcaster.broadcastTaskCreated(companyId, task.getId(), step.getRoleName());
     }
 
     /**
-     * Создает параллельные задачи для всех пользователей с соответствующими ролями
+     * Creates parallel tasks for all users with corresponding roles
      */
     private void createParallelTasks(WorkflowInstance instance, Integer stepOrder,
                                    List<WorkflowXmlParser.WorkflowStep> parallelSteps) {
         log.info("Creating parallel tasks for step {} with {} parallel roles",
                 stepOrder, parallelSteps.size());
 
-        // Группируем шаги по роли (на случай дублирования ролей)
+        // Group steps by role (in case of duplicate roles)
         Map<String, WorkflowXmlParser.WorkflowStep> stepsByRole = parallelSteps.stream()
             .collect(Collectors.toMap(
                 WorkflowXmlParser.WorkflowStep::getRoleName,
                 step -> step,
-                (existing, replacement) -> existing // берем первый, если дублирование
+                (existing, replacement) -> existing // take the first one if duplicated
             ));
 
-        // Для каждой роли создаем задачу для всех пользователей с этой ролью
+        // For each role, create a task for all users with that role
         for (Map.Entry<String, WorkflowXmlParser.WorkflowStep> entry : stepsByRole.entrySet()) {
             String roleName = entry.getKey();
             WorkflowXmlParser.WorkflowStep step = entry.getValue();
 
             log.debug("Creating parallel tasks for role {} at step {}", roleName, stepOrder);
 
-            // Получаем всех пользователей компании с требуемой ролью
+            // Get all company users with the required role
             List<User> usersWithRole = getUsersWithRoleInCompany(
                 roleName,
                 step.getRoleLevel(),
@@ -148,10 +145,10 @@ public class WorkflowEngine {
             if (usersWithRole.isEmpty()) {
                 log.warn("No users found with role {} and level >= {} in company {}",
                         roleName, step.getRoleLevel(), instance.getDocument().getCompany().getId());
-                // Создаем задачу без конкретного назначения
+                // Create a task without a specific assignee
                 createTask(instance, stepOrder, step);
             } else {
-                // Создаем задачу для каждого пользователя с этой ролью
+                // Create a task for each user with this role
                 for (User user : usersWithRole) {
                     createTaskForSpecificUser(instance, stepOrder, step, user);
                 }
@@ -160,7 +157,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * Создает task для конкретного пользователя
+     * Creates a task for a specific user
      */
     private void createTaskForSpecificUser(WorkflowInstance instance, Integer stepOrder,
                                          WorkflowXmlParser.WorkflowStep step, User assignedUser) {
@@ -173,22 +170,22 @@ public class WorkflowEngine {
                 .requiredRoleLevel(step.getRoleLevel())
                 .status(TaskStatus.PENDING)
                 .assignedBy(instance.getInitiatedBy())
-                .assignedTo(assignedUser) // Новое поле для конкретного назначения
+                .assignedTo(assignedUser) // Specific assignment
                 .build();
 
         taskRepository.save(task);
 
-        // Логируем создание task
+        // Log task creation
         auditService.logTaskCreated(task, step.getRoleName());
 
-        // Отправляем уведомление конкретному пользователю
+        // Send notification to the specific user
         Long companyId = instance.getDocument().getCompany().getId();
         eventBroadcaster.broadcastTaskCreated(companyId, task.getId(), step.getRoleName());
         eventBroadcaster.broadcastTaskAssigned(companyId, task.getId(), assignedUser.getId());
     }
 
     /**
-     * Получает всех пользователей компании с указанной ролью и уровнем
+     * Gets all company users with the specified role and level
      */
     private List<User> getUsersWithRoleInCompany(String roleName, Integer minRoleLevel, Long companyId) {
         log.debug("Finding users with role {} and level >= {} in company {}",
@@ -199,13 +196,13 @@ public class WorkflowEngine {
     }
 
     /**
-     * Одобрить task и переместить на следующий шаг
+     * Approve a task and move to the next step
      */
     @Transactional
     public void approveTask(Task task, User approvedBy, String comment) {
         log.info("Approving task: {} by user: {}", task.getId(), approvedBy.getEmail());
 
-        // ✅ ИСПРАВЛЕНИЕ: Проверяем что задача еще PENDING
+        // Check that the task is still PENDING
         if (task.getStatus() != TaskStatus.PENDING) {
             log.warn("Task {} is already {}, cannot approve", task.getId(), task.getStatus());
             throw new RuntimeException("Task is already " + task.getStatus());
@@ -219,18 +216,18 @@ public class WorkflowEngine {
 
         log.info("Task {} marked as APPROVED", task.getId());
 
-        // Логируем одобрение
+        // Log approval
         auditService.logTaskApproved(task, approvedBy, comment);
 
-        // Отправляем email уведомление
+        // Send email notification
         emailNotificationService.notifyTaskApproved(task, approvedBy);
 
-        // Определяем следующий шаг на основе условий
+        // Determine next step based on conditions
         determineAndMoveToNextStep(task.getWorkflowInstance(), task, true);
     }
 
     /**
-     * Отклонить task с применением правил маршрутизации
+     * Reject a task with routing rules application
      */
     @Transactional
     public void rejectTask(Task task, User rejectedBy, String comment) {
@@ -242,15 +239,15 @@ public class WorkflowEngine {
         task.setComment(comment);
         taskRepository.save(task);
 
-        // Логируем отклонение
+        // Log rejection
         auditService.logTaskRejected(task, rejectedBy, comment);
         
-        // Отправляем email уведомление
+        // Send email notification
         emailNotificationService.notifyTaskRejected(task, rejectedBy, comment);
 
         WorkflowInstance instance = task.getWorkflowInstance();
 
-        // Ищем правило маршрутизации для этого шага и типа ON_REJECT
+        // Look for routing rule for this step and ON_REJECT type
         java.util.Optional<RoutingRule> rule = routingRuleRepository
                 .findByTemplateAndStepOrderAndRoutingType(
                         instance.getTemplate(),
@@ -266,31 +263,31 @@ public class WorkflowEngine {
                 task.getStepOrder(), targetStep);
 
             if (targetStep == null) {
-                // Завершить workflow как отклонено
+                // Complete workflow as rejected
                 instance.setStatus(WorkFlowStatus.REJECTED);
                 instance.setCompletedAt(LocalDateTime.now());
                 log.info("Workflow rejected: {}", instance.getId());
                 
-                // Логируем отклонение workflow
+                // Log workflow rejection
                 auditService.logWorkflowRejected(instance, comment);
                 
-                // Отправляем email уведомление
+                // Send email notification
                 emailNotificationService.notifyWorkflowRejected(instance, comment);
                 
                 Long companyId = instance.getDocument().getCompany().getId();
                 eventBroadcaster.broadcastWorkflowRejected(companyId, instance.getId(), comment);
             } else {
-                // Используем новый conditional routing для возврата на шаг
+                // Use conditional routing to return to a step
                 determineAndMoveToNextStep(instance, task, false);
             }
         } else {
-            // Используем conditional routing для reject
+            // Use conditional routing for reject
             determineAndMoveToNextStep(instance, task, false);
         }
     }
 
     /**
-     * Вернуть workflow на конкретный шаг
+     * Return workflow to a specific step
      */
     @Transactional
     protected void returnToStep(WorkflowInstance instance, Integer fromStep, Integer targetStep) {
@@ -298,18 +295,18 @@ public class WorkflowEngine {
 
         List<Task> tasks = taskRepository.findByWorkflowInstance(instance);
 
-        // Отмечаем все tasks текущего шага и после как CANCELLED
+        // Mark all tasks of current step and after as CANCELLED
         tasks.stream()
                 .filter(t -> t.getStepOrder() >= targetStep)
                 .forEach(t -> {
                     t.setStatus(TaskStatus.CANCELLED);
                     taskRepository.save(t);
                     
-                    // Логируем отмену task
+                    // Log task cancellation
                     auditService.logTaskCancelled(t, "Workflow returned to step " + targetStep);
                 });
 
-        // Создаем новые tasks для targetStep (только если их еще нет)
+        // Create new tasks for targetStep (only if they don't exist yet)
         List<Task> targetStepTasks = tasks.stream()
                 .filter(t -> t.getStepOrder().equals(targetStep))
                 .toList();
@@ -317,7 +314,7 @@ public class WorkflowEngine {
         if (targetStepTasks.isEmpty()) {
             log.warn("No tasks found for target step {}, skipping recreation", targetStep);
         } else {
-            // Восстанавливаем статус задач на целевом шаге
+            // Restore task status on target step
             targetStepTasks.forEach(t -> {
                 t.setStatus(TaskStatus.PENDING);
                 t.setCompletedBy(null);
@@ -330,12 +327,12 @@ public class WorkflowEngine {
 
         instance.setStatus(WorkFlowStatus.IN_PROGRESS);
         
-        // Логируем применение правила маршрутизации
+        // Log routing rule application
         auditService.logRoutingRuleApplied(instance, fromStep, targetStep);
     }
 
     /**
-     * Перемещает workflow на следующий шаг
+     * Move workflow to the next step
      */
     @Transactional
     public void moveToNextStep(WorkflowInstance instance) {
@@ -343,7 +340,7 @@ public class WorkflowEngine {
 
         List<Task> tasks = taskRepository.findByWorkflowInstance(instance);
         
-        // Находим текущий шаг
+        // Find current step
         Integer currentStep = tasks.stream()
                 .filter(t -> t.getStatus() == TaskStatus.PENDING)
                 .map(Task::getStepOrder)
@@ -351,24 +348,24 @@ public class WorkflowEngine {
                 .orElse(null);
 
         if (currentStep == null) {
-            // Все tasks завершены
+            // All tasks completed
             instance.setStatus(WorkFlowStatus.COMPLETED);
             instance.setCompletedAt(LocalDateTime.now());
             log.info("Workflow completed: {}", instance.getId());
             
-            // Логируем завершение
+            // Log completion
             auditService.logWorkflowCompleted(instance);
             
-            // Отправляем email уведомление
+            // Send email notification
             emailNotificationService.notifyWorkflowCompleted(instance);
             
-            // Отправляем уведомление о завершении
+            // Send completion notification
             Long companyId = instance.getDocument().getCompany().getId();
             eventBroadcaster.broadcastWorkflowCompleted(companyId, instance.getId());
             return;
         }
 
-        // Проверяем, все ли tasks текущего шага завершены
+        // Check if all tasks of current step are completed
         List<Task> currentStepTasks = tasks.stream()
                 .filter(t -> t.getStepOrder().equals(currentStep))
                 .toList();
@@ -382,7 +379,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * Определяет следующий шаг workflow на основе условий
+     * Determines next workflow step based on conditions
      */
     public Integer determineNextStep(WorkflowInstance instance, Task completedTask,
                                    boolean wasApproved, String workflowXml) {
@@ -392,7 +389,7 @@ public class WorkflowEngine {
         try {
             Document document = instance.getDocument();
 
-            // Ищем подходящее правило маршрутизации
+            // Find suitable routing rule
             RoutingType routingType = wasApproved ? RoutingType.ON_APPROVE : RoutingType.ON_REJECT;
 
             RoutingRule applicableRule = routingRuleRepository
@@ -402,7 +399,7 @@ public class WorkflowEngine {
                     routingType
                 )
                 .filter(rule -> {
-                    // Проверяем условие, если оно есть
+                    // Check condition if present
                     String condition = rule.getCondition();
                     return condition == null || ConditionEvaluator.evaluate(condition, document);
                 })
@@ -414,7 +411,7 @@ public class WorkflowEngine {
                         completedTask.getStepOrder(), targetStep, applicableRule.getCondition());
 
                 if (targetStep == null) {
-                    // Завершить workflow
+                    // Complete workflow
                     log.info("Routing rule indicates workflow completion");
                     return null;
                 }
@@ -422,36 +419,36 @@ public class WorkflowEngine {
                 return targetStep;
             }
 
-            // Если нет подходящего правила, используем стандартную логику
+            // If no suitable rule, use standard logic
             return getNextSequentialStep(instance, completedTask.getStepOrder(), workflowXml);
 
         } catch (Exception e) {
             log.error("Error determining next step: {}", e.getMessage(), e);
-            // В случае ошибки возвращаем следующий sequential шаг
+            // In case of error, return next sequential step
             return getNextSequentialStep(instance, completedTask.getStepOrder(), workflowXml);
         }
     }
 
     /**
-     * Получает следующий sequential шаг (для fallback логики)
+     * Gets next sequential step (for fallback logic)
      */
     private Integer getNextSequentialStep(WorkflowInstance instance, Integer currentStep, String workflowXml) {
         try {
             WorkflowXmlParser.WorkflowDefinition definition =
                 WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
 
-            // Находим максимальный order среди шагов
+            // Find maximum order among steps
             int maxOrder = definition.getSteps().stream()
                 .mapToInt(WorkflowXmlParser.WorkflowStep::getOrder)
                 .max()
                 .orElse(currentStep);
 
-            // Если текущий шаг не последний, возвращаем следующий
+            // If current step is not last, return next
             if (currentStep < maxOrder) {
                 return currentStep + 1;
             }
 
-            // Это последний шаг - завершить workflow
+            // This is the last step - complete workflow
             return null;
 
         } catch (Exception e) {
@@ -461,7 +458,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * Определяет следующий шаг и перемещает workflow
+     * Determines next step and moves workflow
      */
     @Transactional
     public void determineAndMoveToNextStep(WorkflowInstance instance, Task completedTask, boolean wasApproved) {
@@ -469,7 +466,7 @@ public class WorkflowEngine {
                 completedTask.getId(), wasApproved ? "approved" : "rejected");
 
         try {
-            // ✅ ИСПРАВЛЕНИЕ: Проверяем все ли задачи текущего шага завершены
+            // Check if all tasks of current step are completed
             List<Task> currentStepTasks = taskRepository.findByWorkflowInstance(instance).stream()
                     .filter(t -> t.getStepOrder().equals(completedTask.getStepOrder()))
                     .toList();
@@ -481,7 +478,7 @@ public class WorkflowEngine {
             if (pendingCount > 0) {
                 log.info("Step {} still has {} PENDING tasks, waiting for completion",
                         completedTask.getStepOrder(), pendingCount);
-                return; // Ждем пока все задачи текущего шага завершатся
+                return; // Wait for all current step tasks to complete
             }
 
             log.info("All tasks for step {} completed, determining next step",
@@ -491,29 +488,29 @@ public class WorkflowEngine {
             Integer nextStep = determineNextStep(instance, completedTask, wasApproved, workflowXml);
 
             if (nextStep == null) {
-                // Workflow завершен
+                // Workflow completed
                 completeWorkflow(instance, wasApproved);
             } else if (nextStep.equals(completedTask.getStepOrder())) {
-                // ✅ ИСПРАВЛЕНИЕ: Возврат на тот же шаг - сбрасываем задачи
+                // Return to the same step - reset tasks
                 log.info("Returning to the same step {}, resetting tasks", nextStep);
                 returnToStep(instance, completedTask.getStepOrder(), nextStep);
             } else {
-                // Создаем задачи для следующего шага
+                // Create tasks for next step
                 createTasksForStep(instance, nextStep, workflowXml);
 
-                // Отправляем WebSocket уведомления участникам следующего шага
+                // Send WebSocket notifications to next step participants
                 notifyNextStepParticipants(instance, nextStep, workflowXml);
             }
 
         } catch (Exception e) {
             log.error("Error in determineAndMoveToNextStep: {}", e.getMessage(), e);
-            // Fallback: завершаем workflow
+            // Fallback: complete workflow
             completeWorkflow(instance, false);
         }
     }
 
     /**
-     * Завершает workflow
+     * Completes workflow
      */
     private void completeWorkflow(WorkflowInstance instance, boolean successful) {
         instance.setStatus(successful ? WorkFlowStatus.COMPLETED : WorkFlowStatus.REJECTED);
@@ -522,7 +519,7 @@ public class WorkflowEngine {
         log.info("Workflow {} completed ({})", instance.getId(),
                 successful ? "successfully" : "with rejection");
 
-        // Логируем завершение
+        // Log completion
         if (successful) {
             auditService.logWorkflowCompleted(instance);
             emailNotificationService.notifyWorkflowCompleted(instance);
@@ -531,7 +528,7 @@ public class WorkflowEngine {
             emailNotificationService.notifyWorkflowRejected(instance, "Completed via conditional routing");
         }
 
-        // Отправляем WebSocket уведомление
+        // Send WebSocket notification
         Long companyId = instance.getDocument().getCompany().getId();
         if (successful) {
             eventBroadcaster.broadcastWorkflowCompleted(companyId, instance.getId());
@@ -542,24 +539,24 @@ public class WorkflowEngine {
     }
 
     /**
-     * Уведомляет участников следующего шага
+     * Notifies participants of the next step
      */
     private void notifyNextStepParticipants(WorkflowInstance instance, Integer nextStep, String workflowXml) {
         try {
             WorkflowXmlParser.WorkflowDefinition definition =
                 WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
 
-            // Находим роли для следующего шага
+            // Find roles for next step
             List<String> rolesForNextStep = definition.getSteps().stream()
                 .filter(step -> step.getOrder().equals(nextStep))
                 .map(WorkflowXmlParser.WorkflowStep::getRoleName)
                 .distinct()
                 .toList();
 
-            // Отправляем уведомления всем пользователям с этими ролями
+            // Send notifications to all users with these roles
             Long companyId = instance.getDocument().getCompany().getId();
             for (String roleName : rolesForNextStep) {
-                eventBroadcaster.broadcastTaskCreated(companyId, null, roleName); // null taskId для общего уведомления
+                eventBroadcaster.broadcastTaskCreated(companyId, null, roleName); // null taskId for generic notification
             }
 
         } catch (Exception e) {
@@ -568,13 +565,13 @@ public class WorkflowEngine {
     }
 
     /**
-     * Создает задачи для указанного шага
+     * Creates tasks for specified step
      */
     public void createTasksForStep(WorkflowInstance instance, Integer stepOrder, String workflowXml) {
         log.info("Creating tasks for step {} in workflow {}", stepOrder, instance.getId());
 
         try {
-            // ✅ ИСПРАВЛЕНИЕ: Проверяем существующие задачи для этого шага
+            // Check existing tasks for this step
             List<Task> existingTasks = taskRepository.findByWorkflowInstance(instance).stream()
                     .filter(t -> t.getStepOrder().equals(stepOrder))
                     .toList();
@@ -583,7 +580,7 @@ public class WorkflowEngine {
                 log.info("Found {} existing tasks for step {}, checking their status",
                         existingTasks.size(), stepOrder);
 
-                // Если есть PENDING задачи - не создаем новые
+                // If there are PENDING tasks - don't create new
                 boolean hasPendingTasks = existingTasks.stream()
                         .anyMatch(t -> t.getStatus() == TaskStatus.PENDING);
 
@@ -592,15 +589,15 @@ public class WorkflowEngine {
                     return;
                 }
 
-                // Если все задачи завершены (APPROVED/REJECTED/CANCELLED)
-                // Это может быть возврат на шаг - тогда создаем новые задачи
+                // If all tasks are completed (APPROVED/REJECTED/CANCELLED)
+                // This could be a return to step - then create new tasks
                 log.info("All existing tasks for step {} are completed, will create new tasks", stepOrder);
             }
 
             WorkflowXmlParser.WorkflowDefinition definition =
                     WorkflowXmlParser.parseWorkflowDefinition(workflowXml);
 
-            // Находим шаги с указанным order
+            // Find steps with specified order
             List<WorkflowXmlParser.WorkflowStep> stepsForOrder = definition.getSteps().stream()
                     .filter(step -> step.getOrder().equals(stepOrder))
                     .toList();
@@ -610,15 +607,15 @@ public class WorkflowEngine {
                 return;
             }
 
-            // Проверяем, есть ли параллельные шаги
+            // Check if there are parallel steps
             boolean hasParallelSteps = stepsForOrder.stream()
                     .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
 
             if (hasParallelSteps) {
-                // Создаем параллельные задачи
+                // Create parallel tasks
                 createParallelTasks(instance, stepOrder, stepsForOrder);
             } else {
-                // Создаем обычные задачи (для совместимости)
+                // Create normal tasks (for compatibility)
                 for (WorkflowXmlParser.WorkflowStep step : stepsForOrder) {
                     createTask(instance, stepOrder, step);
                 }
@@ -632,10 +629,10 @@ public class WorkflowEngine {
     }
 
     /**
-     * Проверяет, может ли пользователь одобрить task
+     * Checks if user can approve task
      */
     public boolean canUserApproveTask(Task task, User user) {
-        // Получаем роль пользователя в компании
+        // Get user role in company
         var company = task.getWorkflowInstance().getDocument().getCompany();
 
         var userRole = user.getMemberships().stream()
@@ -645,6 +642,11 @@ public class WorkflowEngine {
                 .orElse(0);
 
         boolean canApprove = userRole >= task.getRequiredRoleLevel();
+        // CEO with level 100 always can approve if they are in the same company
+        if (userRole == 100) {
+            canApprove = true;
+        }
+        
         log.debug("User {} role level {} can approve task requiring level {}: {}",
             user.getEmail(), userRole, task.getRequiredRoleLevel(), canApprove);
 

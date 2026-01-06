@@ -95,13 +95,13 @@ public class DocumentServiceImpl implements DocumentService {
                     .orElseThrow(() -> new CompanyNotFoundException(
                         "Company not found with id: " + companyId));
 
-            // Проверяем дубликаты перед созданием документа
+            // Check duplicates before document creation
             String sha256Hash = documentHashService.calculateSha256Hash(file.getBytes());
             boolean isDuplicate = documentHashService.isDuplicate(sha256Hash, companyId);
 
             if (isDuplicate) {
                 log.warn("Duplicate document detected for company {}", companyId);
-                // Можно либо выбросить исключение, либо продолжить - зависит от бизнес-логики
+                // Can either throw exception or continue - depends on business logic
                 // throw new DocumentUploadException("Document with identical content already exists");
             }
 
@@ -116,14 +116,14 @@ public class DocumentServiceImpl implements DocumentService {
 
             document = documentRepository.save(document);
 
-            // Создаем первую версию документа
+            // Create the first version of the document
             try {
                 documentVersioningService.createNewVersion(document, file, currentUser,
                         "Initial document upload", "UPLOAD");
                 log.info("Created initial version for document {}", document.getId());
             } catch (Exception e) {
                 log.error("Failed to create initial version for document {}", document.getId(), e);
-                // Не выбрасываем исключение - документ создан, просто без версий
+                // Do not throw exception - document is created, just without versions
             }
             log.info("Document successfully uploaded. ID: {}, Company: {}, User: {}", 
                     document.getId(), companyId, currentUser.getEmail());

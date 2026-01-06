@@ -191,14 +191,14 @@ public class WorkflowAuditService {
     }
 
     /**
-     * Получить всю историю для workflow
+     * Get full history for workflow
      */
     public java.util.List<WorkflowAuditLog> getWorkflowHistory(WorkflowInstance instance) {
         return auditLogRepository.findByWorkflowInstanceOrderedByTime(instance);
     }
 
     /**
-     * Получить историю для task
+     * Get history for task
      */
     public java.util.List<WorkflowAuditLog> getTaskHistory(Task task) {
         return auditLogRepository.findByTask(task);

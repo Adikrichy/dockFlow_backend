@@ -1,16 +1,6 @@
 package org.aldousdev.dockflowbackend.chat.service;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j; // This looks correct, but maybe the annotation processor is failing? Double check.
-// If the import is already there, then maybe the annotation was somehow removed?
-// Checked file content: 
-// 4: import lombok.extern.slf4j.Slf4j;
-// 23: @Slf4j
-// This looks correct. But "cannot find symbol variable log" persists.
-// Wait, sometimes compilation fails on Lombok if there are other syntax errors (like the repeated Transactional).
-// So fixing Transactional might fix Log. 
-// However, just to be safe, I will re-write the imports section cleanly.
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.exceptions.CompanyNotFoundException;
@@ -38,7 +28,7 @@ public class ChatService {
     private final AuthServiceImpl authService;
 
     /**
-     * Получить все каналы компании
+     * Get all company channels
      */
     public List<ChatChannelResponse> getCompanyChannels(Long companyId) {
         log.info("Fetching channels for company: {}", companyId);
@@ -52,7 +42,7 @@ public class ChatService {
     }
 
     /**
-     * Получить канал с историей сообщений
+     * Get channel with message history
      */
     @Transactional
     public ChatChannelResponse getChannelWithMessages(Long channelId) {
@@ -72,7 +62,7 @@ public class ChatService {
     }
 
     /**
-     * Сохранить новое сообщение
+     * Save new message
      */
     @Transactional
     public ChatMessageDTO saveMessage(Long channelId, String content, User currentUser) {
@@ -105,7 +95,7 @@ public class ChatService {
     }
 
     /**
-     * Создать новый канал для компании
+     * Create new channel for company
      */
     @Transactional
     public ChatChannelResponse createChannel(Long companyId, String name, String description) {
@@ -129,7 +119,7 @@ public class ChatService {
     }
 
     /**
-     * Удалить сообщение
+     * Delete message
      */
     @Transactional
     public void deleteMessage(Long messageId) {
@@ -138,7 +128,7 @@ public class ChatService {
     }
 
     /**
-     * Редактировать сообщение
+     * Edit message
      */
     @Transactional
     public MessageResponse editMessage(Long messageId, String newContent) {
@@ -157,7 +147,7 @@ public class ChatService {
     private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
 
     /**
-     * Получить или создать DM с пользователем
+     * Get or create DM with user
      */
     @Transactional
     public ChatChannelResponse getOrCreateDM(Long targetUserId) {
@@ -184,7 +174,7 @@ public class ChatService {
     }
 
     /**
-     * Получить список DM пользователя
+     * Get user's DM list
      */
     public List<ChatChannelResponse> getUserDMs() {
         User currentUser = authService.getCurrentUser();

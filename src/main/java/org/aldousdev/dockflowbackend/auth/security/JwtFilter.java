@@ -28,7 +28,9 @@ public class JwtFilter extends OncePerRequestFilter {
             "/api/register",
             "/api/auth/verify-email",
             "/api/auth/login",
-            "/api/auth/resend-verification-code"
+            "/api/auth/resend-verification-code",
+            "/api/company/list",
+            "/api/company/search"
     );
 
     private static final List<String> PUBLIC_PREFIXES = List.of(

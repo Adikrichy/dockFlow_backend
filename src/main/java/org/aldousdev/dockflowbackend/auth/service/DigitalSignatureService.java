@@ -213,12 +213,16 @@ public class DigitalSignatureService {
     public boolean verifyKeyFile(byte[] p12FileBytes, Long userId, Long companyId) {
         try {
             // Use default password - same as used during key creation
+            log.info("=== KEY VERIFICATION STARTED ===");
+            log.info("userId: {}, companyId: {}", userId, companyId);
+            log.info("Received file size: {} bytes", p12FileBytes.length);
             String defaultPassword = "defaultPassword123";
             
             // Load PKCS#12 keystore with default password
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(new java.io.ByteArrayInputStream(p12FileBytes), defaultPassword.toCharArray());
-            
+            log.info("Keystore successfully loaded with password");
+
             // Get the alias (should be company_{companyId}_user_{userId})
             String expectedAlias = String.format("company_%d_user_%d", companyId, userId);
             

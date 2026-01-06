@@ -11,6 +11,7 @@ import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.enums.UserType;
 import org.aldousdev.dockflowbackend.auth.exceptions.ForbiddenException;
+import org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException;
 import org.aldousdev.dockflowbackend.auth.exceptions.BadRequestException;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
@@ -22,9 +23,14 @@ import org.aldousdev.dockflowbackend.auth.mapper.CompanyMapper;
 import org.aldousdev.dockflowbackend.auth.service.CompanyService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
-
+import org.aldousdev.dockflowbackend.workflow.event.WorkflowEventBroadcaster;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +47,7 @@ public class CompanyServiceImpl implements CompanyService {
     private final JWTService jwtService;
     private final CompanyRoleEntityRepository companyRoleEntityRepository;
     private final org.aldousdev.dockflowbackend.auth.service.DigitalSignatureService digitalSignatureService;
+    private final WorkflowEventBroadcaster workflowEventBroadcaster;
 
     @Override
     public CreateCompanyResponse create(CompanyRequest request){
@@ -179,13 +186,13 @@ public class CompanyServiceImpl implements CompanyService {
         User user = authService.getCurrentUser();
 
         Membership membership = membershipRepository.findByCompanyIdAndUserId(
-                id,user.getId()).orElseThrow(() -> new RuntimeException("No access to this company"));
+                id,user.getId()).orElseThrow(() -> new CompanyAccessDeniedException("No access to this company"));
 
         // Verify the key file before granting access (password not needed - using default)
         boolean isKeyValid = digitalSignatureService.verifyKeyFile(keyFileBytes, user.getId(), id);
         
         if (!isKeyValid) {
-            throw new RuntimeException("Invalid key file");
+            throw new CompanyAccessDeniedException("Invalid key file");
         }
 
         Map<String, Object> claims = new HashMap<>();
@@ -353,26 +360,26 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity role = companyRoleEntityRepository.findById(roleId)
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found with id: " + roleId));
 
-        // Запрещаем редактировать системные роли
+        // Disallow editing system roles
         if (Boolean.TRUE.equals(role.getIsSystem())) {
             throw new BadRequestException("Cannot modify system role");
         }
 
-        // Проверяем, что пользователь состоит в компании этой роли
+        // Verify that the user is a member of the company for this role
         Membership membership = membershipRepository.findByCompanyIdAndUserId(
                         role.getCompany().getId(), currentUser.getId())
                 .orElseThrow(() -> new ForbiddenException("You do not have access to roles in this company"));
 
-        // Получаем текущий уровень пользователя
+        // Get current user's level
         Integer currentUserLevel = membership.getRole().getLevel();
 
-        // Нельзя обновлять роль уровнем выше своего
+        // Cannot update a role to a level higher than your own
         if (request.getRoleLevel() > currentUserLevel) {
             throw new ForbiddenException(
                     "Cannot assign role level higher than your own (" + currentUserLevel + ")");
         }
 
-        // Проверка на дубликат имени в компании (исключая текущую роль)
+        // Check for duplicate name in the company (excluding the current role)
         boolean nameExists = companyRoleEntityRepository.existsByNameAndCompanyIdAndIdNot(
                 request.getRoleName(), role.getCompany().getId(), roleId);
 
@@ -381,7 +388,7 @@ public class CompanyServiceImpl implements CompanyService {
                     "Role with name '" + request.getRoleName() + "' already exists in this company");
         }
 
-        // Обновляем поля
+        // Update fields
         role.setName(request.getRoleName());
         role.setLevel(request.getRoleLevel());
 
@@ -404,16 +411,16 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity role = companyRoleEntityRepository.findById(roleId)
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found with id: " + roleId));
 
-        // Запрещаем удалять системные роли
+        // Disallow deleting system roles
         if (Boolean.TRUE.equals(role.getIsSystem())) {
             throw new BadRequestException("Cannot delete system role: " + role.getName());
         }
 
-        // Проверка доступа к компании
+        // Verify company access
         membershipRepository.findByCompanyIdAndUserId(role.getCompany().getId(), currentUser.getId())
                 .orElseThrow(() -> new ForbiddenException("You do not have access to this company"));
 
-        // Нельзя удалить роль, если она назначена пользователям
+        // Cannot delete a role if it is assigned to users
         boolean isAssigned = membershipRepository.existsByRoleId(roleId);
         if (isAssigned) {
             throw new BadRequestException(
@@ -421,5 +428,72 @@ public class CompanyServiceImpl implements CompanyService {
         }
 
         companyRoleEntityRepository.delete(role);
+    }
+
+    @Override
+    public List<CompanyResponse> listAll() {
+        return companyRepository.findAll().stream()
+                .map(companyMapper::toDto)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<CompanyResponse> searchByName(String name) {
+        return companyRepository.findByNameContainingIgnoreCase(name).stream()
+                .map(companyMapper::toDto)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    @RequiresRoleLevel(100)
+    public void updateMemberRole(Long userId, Long roleId) {
+        // 1. Get current company ID from JWT cookie
+        HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+        String token = null;
+        if (request.getCookies() != null) {
+            token = Arrays.stream(request.getCookies())
+                    .filter(c -> "jwtWithCompany".equals(c.getName()))
+                    .map(Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        if (token == null || !jwtService.isTokenValid(token)) {
+            throw new CompanyAccessDeniedException("Invalid or missing company context token");
+        }
+
+        Long companyId = jwtService.extractCompanyId(token);
+
+        // 2. Load the target membership
+        Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Member not found in this company"));
+
+        // 3. Load the new role
+        CompanyRoleEntity newRole = companyRoleEntityRepository.findById(roleId)
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        // 4. Verify the role belongs to the same company
+        if (!newRole.getCompany().getId().equals(companyId)) {
+            throw new BadRequestException("Role does not belong to this company");
+        }
+
+        // 5. CEO Exclusivity & Integrity Rules
+        // Rule: Only one CEO allowed (Level 100). Promoting to 100 is forbidden.
+        if (newRole.getLevel() >= 100 && membership.getRole().getLevel() < 100) {
+            throw new BadRequestException("Promotion to CEO level (100) is forbidden. There can only be one CEO.");
+        }
+
+        // Rule: Current CEO cannot be downgraded via this endpoint.
+        if (membership.getRole().getLevel() >= 100 && newRole.getLevel() < 100) {
+            throw new BadRequestException("The CEO role cannot be changed. Ownership transfer requires the CEO to leave the company.");
+        }
+
+        // 6. Update the membership
+        membership.setRole(newRole);
+        membershipRepository.save(membership);
+
+        // 7. Notify the user via WebSocket to refresh their token/context
+        workflowEventBroadcaster.broadcastRoleUpdated(userId, newRole.getName(), newRole.getLevel());
     }
 }

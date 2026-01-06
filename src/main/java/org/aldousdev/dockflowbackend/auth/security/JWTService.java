@@ -3,7 +3,6 @@ package org.aldousdev.dockflowbackend.auth.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,26 +28,26 @@ public class JWTService {
     @Value("${jwt.expiration}")
     private long expiration;
 
-    @Value("${jwt.refresh-expiration:604800000}") // 7 дней по умолчанию
+    @Value("${jwt.refresh-expiration:604800000}") // 7 days by default
     private long refreshExpiration;
 
-    // Генерация ключа для подписи
+    // Signature key generation
     private Key getSignInKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    // Генерация JWT токена с userId и userType
+    // JWT token generation with userId and userType
     public String generateToken(User user) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
-                .setSubject(user.getEmail())
+                .subject(user.getEmail())
                 .claim("userId", user.getId())
                 .claim("userType", user.getUserType().name())
-                .setIssuedAt(now)
-                .setExpiration(expiryDate)
-                .signWith(getSignInKey(), SignatureAlgorithm.HS512)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSignInKey())
                 .compact();
     }
 
@@ -57,39 +56,39 @@ public class JWTService {
         Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
-                .setSubject(user.getEmail())
+                .subject(user.getEmail())
                 .claim("userId", user.getId())
                 .claim("userType", user.getUserType().name())
-                .addClaims(extraClaims)
-                .setIssuedAt(now)
-                .setExpiration(expiryDate)
-                .signWith(getSignInKey(),SignatureAlgorithm.HS512)
+                .claims(extraClaims)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSignInKey())
                 .compact();
     }
 
-    // Генерация refresh token
+    // Refresh token generation
     public String generateRefreshToken(User user) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + refreshExpiration);
 
         return Jwts.builder()
-                .setSubject(user.getEmail())
+                .subject(user.getEmail())
                 .claim("tokenType", "refresh")
                 .claim("userId", user.getId())
-                .setIssuedAt(now)
-                .setExpiration(expiryDate)
-                .signWith(getSignInKey(), SignatureAlgorithm.HS512)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSignInKey())
                 .compact();
     }
 
-    // Проверка валидности refresh token
+    // Refresh token validity check
     public boolean isRefreshTokenValid(String refreshToken, User user) {
         try {
             boolean isValid = isTokenValid(refreshToken) &&
                             extractEmail(refreshToken).equals(user.getEmail()) &&
                             "refresh".equals(extractTokenType(refreshToken));
 
-            // Дополнительная проверка на соответствие сохраненному refresh token
+            // Additional check for match with stored refresh token
             return isValid && refreshToken.equals(user.getRefreshToken()) &&
                    user.getRefreshTokenExpiry() != null &&
                    user.getRefreshTokenExpiry().isAfter(java.time.LocalDateTime.now());
@@ -99,12 +98,12 @@ public class JWTService {
         }
     }
 
-    // Извлечение типа токена (access/refresh)
+    // Extract token type (access/refresh)
     public String extractTokenType(String token) {
         return extractClaim(token, claims -> claims.get("tokenType", String.class));
     }
 
-    // Извлечение даты истечения refresh token
+    // Extract refresh token expiration date
     public java.time.LocalDateTime getRefreshTokenExpiry(String refreshToken) {
         Date expiry = extractClaim(refreshToken, Claims::getExpiration);
         return expiry.toInstant()
@@ -112,57 +111,57 @@ public class JWTService {
                 .toLocalDateTime();
     }
 
-    // Проверка валидности токена (подпись + срок)
+    // Token validity check (signature + expiration)
     public boolean isTokenValid(String token) {
         try {
             Jwts.parser()
-                    .setSigningKey(getSignInKey())
+                    .verifyWith((javax.crypto.SecretKey) getSignInKey())
                     .build()
-                    .parseClaimsJws(token);
+                    .parseSignedClaims(token);
             return !isTokenExpired(token);
         } catch (Exception e) {
             return false;
         }
     }
 
-    // Проверка валидности токена для конкретного пользователя
+    // Token validity check for a specific user
     public boolean isTokenValid(String token, User user) {
         return isTokenValid(token) && extractEmail(token).equals(user.getEmail());
     }
 
-    // Извлечение email из токена
+    // Extract email from token
     public String extractEmail(String token) {
         return extractClaim(token, Claims::getSubject);
     }
 
-    // Извлечение userType из токена
+    // Extract userType from token
     public String extractUserType(String token) {
         return extractClaim(token, claims -> claims.get("userType", String.class));
     }
 
-    // Извлечение userId из токена
+    // Extract userId from token
     public Long extractUserId(String token) {
         return extractClaim(token, claims -> ((Number) claims.get("userId")).longValue());
     }
 
-    // Проверка срока действия токена
+    // Token expiration check
     public boolean isTokenExpired(String token) {
         return extractClaim(token, Claims::getExpiration).before(new Date());
     }
 
-    // Универсальный метод для извлечения любого поля
+    // Universal method for extracting any field
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
         Claims claims = extractAllClaims(token);
         return claimsResolver.apply(claims);
     }
 
-    // Извлечение всех claims
+    // Extract all claims
     private Claims extractAllClaims(String token) {
         return Jwts.parser()
-                .setSigningKey(getSignInKey())
+                .verifyWith((javax.crypto.SecretKey) getSignInKey())
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
     public String extractCompanyRole(String token){
@@ -187,7 +186,7 @@ public class JWTService {
             }
 
             if(role instanceof Number){
-                Integer converted = ((Integer) role).intValue();
+                Integer converted = ((Number) role).intValue();
                 log.info("Converted Number to Integer {}", converted);
                 return converted;
             }
@@ -214,7 +213,12 @@ public class JWTService {
     }
 
     public Long extractCompanyId(String token){
-        return extractClaim(token, claims -> claims.get("companyId", Long.class));
+        return extractClaim(token, claims -> {
+            Object id = claims.get("companyId");
+            if (id == null) return null;
+            if (id instanceof Number) return ((Number) id).longValue();
+            return null;
+        });
     }
 
     public Long extractCompanyIdFromAuth(Authentication authentication){

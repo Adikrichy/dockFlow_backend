@@ -17,6 +17,7 @@ import org.aldousdev.dockflowbackend.auth.service.UserService;
 import org.aldousdev.dockflowbackend.workflow.components.CanStartWorkflow;
 import org.aldousdev.dockflowbackend.workflow.dto.request.BulkTaskRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.TaskApprovalRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowPermissionRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.BulkOperationResponse;
@@ -451,5 +452,42 @@ public class WorkflowController {
         WorkflowTemplateResponse update = workflowService.updateAllowedRoleLevels(templateId,
                 request.getAllowedRoleLevels(),user);
         return ResponseEntity.ok(update);
+    }
+
+    /**
+     * PUT /api/workflow/template/{templateId} - обновить шаблон
+     */
+    @PutMapping("/template/{templateId}")
+    @RequiresRoleLevel(60)
+    @Operation(summary = "Обновить workflow шаблон",
+            description = "Обновляет существующий workflow шаблон. Требует роль Manager или выше.")
+    public ResponseEntity<WorkflowTemplateResponse> updateTemplate(
+            @PathVariable Long templateId,
+            @RequestBody UpdateWorkflowTemplateRequest request,
+            Authentication authentication) {
+
+        log.info("Updating workflow template: {}", templateId);
+        User user = userService.getUserByEmail(authentication.getName());
+
+        WorkflowTemplateResponse template = workflowService.updateTemplate(templateId, request, user);
+        return ResponseEntity.ok(template);
+    }
+
+    /**
+     * DELETE /api/workflow/template/{templateId} - удалить шаблон
+     */
+    @DeleteMapping("/template/{templateId}")
+    @RequiresRoleLevel(60)
+    @Operation(summary = "Удалить workflow шаблон",
+            description = "Удаляет workflow шаблон (soft delete). Требует роль Manager или выше.")
+    public ResponseEntity<Void> deleteTemplate(
+            @PathVariable Long templateId,
+            Authentication authentication) {
+
+        log.info("Deleting workflow template: {}", templateId);
+        User user = userService.getUserByEmail(authentication.getName());
+
+        workflowService.deleteTemplate(templateId, user);
+        return ResponseEntity.noContent().build();
     }
 }

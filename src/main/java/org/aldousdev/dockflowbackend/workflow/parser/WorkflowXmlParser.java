@@ -46,8 +46,8 @@ public class WorkflowXmlParser {
     }
 
     /**
-     * Парсит XML маршрут workflow
-     * Пример XML:
+     * Parses the workflow XML steps.
+     * Example XML:
      * <workflow>
      *   <step order="1" roleName="Manager" roleLevel="60" action="review" parallel="false"/>
      *   <step order="2" roleName="Director" roleLevel="80" action="approve" parallel="true"/>
@@ -65,7 +65,7 @@ public class WorkflowXmlParser {
 
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            // Отключаем XXE атаки
+            // Disable XXE attacks
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             
@@ -94,7 +94,7 @@ public class WorkflowXmlParser {
                 steps.add(step);
             }
 
-            // Сортируем по порядку
+            // Sort by order
             steps.sort((a, b) -> Integer.compare(a.getOrder(), b.getOrder()));
             
             log.info("Successfully parsed {} workflow steps", steps.size());
@@ -122,7 +122,7 @@ public class WorkflowXmlParser {
     }
 
     /**
-     * Парсит полный workflow с правилами маршрутизации
+     * Parses the complete workflow definition including routing rules
      */
     public static WorkflowDefinition parseWorkflowDefinition(String xmlContent) throws Exception {
         log.info("Parsing complete workflow definition with routing rules");
@@ -138,8 +138,8 @@ public class WorkflowXmlParser {
     }
 
     /**
-     * Парсит правила маршрутизации из XML
-     * Пример:
+     * Parses routing rules from XML
+     * Example:
      * <onReject stepOrder="1" targetStep="1" description="Return to manager"/>
      * <onReject stepOrder="2" targetStep="1" description="Return to manager if director rejects"/>
      */
@@ -194,7 +194,7 @@ public class WorkflowXmlParser {
         rule.setStepOrder(Integer.parseInt(element.getAttribute("stepOrder")));
         rule.setRoutingType(routingType);
         
-        // targetStep может быть null (завершить workflow)
+        // targetStep can be null (complete workflow)
         if (element.hasAttribute("targetStep")) {
             String targetStepStr = element.getAttribute("targetStep");
             if (!targetStepStr.isEmpty() && !targetStepStr.equals("null")) {
@@ -210,7 +210,7 @@ public class WorkflowXmlParser {
     }
 
     /**
-     * Генерирует пример XML для workflow с условной маршрутизацией
+     * Generates example XML for workflow with conditional routing
      */
     public static String generateExampleXml() {
         return """
@@ -242,7 +242,7 @@ public class WorkflowXmlParser {
                 """;
     }
     /**
-     * Генерирует пример XML для параллельного workflow
+     * Generates example XML for parallel workflow
      */
     public static String generateParallelWorkflowXml() {
         return """

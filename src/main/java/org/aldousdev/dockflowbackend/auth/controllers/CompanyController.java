@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.CreateRoleRequest;
+import org.aldousdev.dockflowbackend.auth.dto.request.UpdateMemberRoleRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
@@ -122,7 +123,7 @@ public class CompanyController {
                 .body(keyFileBytes);
     }
 
-    @PostMapping("/{companyId}/enter")
+    @PostMapping("/enter/{companyId}")
     @Operation(summary = "Войти в компанию", 
             description = "Переключает контекст пользователя на другую компанию, обновляя JWT токен. " +
                     "Требует загрузку PKCS#12 ключа для проверки доступа")
@@ -279,6 +280,20 @@ public class CompanyController {
         }
     }
 
+    @GetMapping("/list")
+    @Operation(summary = "Получить список всех компаний",
+            description = "Возвращает список всех компаний в системе")
+    public ResponseEntity<List<CompanyResponse>> listAllCompanies() {
+        return ResponseEntity.ok(companyService.listAll());
+    }
+
+    @GetMapping("/search")
+    @Operation(summary = "Поиск компаний по названию",
+            description = "Возвращает список компаний, название которых содержит указанную строку")
+    public ResponseEntity<List<CompanyResponse>> searchCompanies(@RequestParam String name) {
+        return ResponseEntity.ok(companyService.searchByName(name));
+    }
+
     @GetMapping("/members")
     @Operation(summary = "Получить участников компании",
             description = "Возвращает список всех участников в компании, в которую выполнен вход")
@@ -311,7 +326,19 @@ public class CompanyController {
     @RequiresRoleLevel(100)
     public ResponseEntity<Void> deleteRole(@PathVariable Long roleId) {
         companyService.deleteRole(roleId);
-        return ResponseEntity.noContent().build(); // 204 No Content — стандарт для успешного удаления
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/members/{userId}/role")
+    @Operation(summary = "Обновить роль участника", 
+            description = "Позволяет CEO изменить роль сотрудника внутри компании.")
+    @RequiresRoleLevel(100)
+    public ResponseEntity<Void> updateMemberRole(
+            @PathVariable Long userId,
+            @Valid @RequestBody UpdateMemberRoleRequest request) {
+        
+        companyService.updateMemberRole(userId, request.getRoleId());
+        return ResponseEntity.ok().build();
     }
 
     private String getTokenFromRequest(HttpServletRequest request) {

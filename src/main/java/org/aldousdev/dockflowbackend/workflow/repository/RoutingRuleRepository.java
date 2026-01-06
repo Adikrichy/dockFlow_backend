@@ -20,4 +20,6 @@ public interface RoutingRuleRepository extends JpaRepository<RoutingRule, Long> 
     );
 
     List<RoutingRule> findByTemplateAndStepOrder(WorkflowTemplate template, Integer stepOrder);
+
+    void deleteByTemplate(WorkflowTemplate template);
 }

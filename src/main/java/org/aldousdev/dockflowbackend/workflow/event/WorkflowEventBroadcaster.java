@@ -120,4 +120,20 @@ public class WorkflowEventBroadcaster {
         
         messagingTemplate.convertAndSend("/topic/workflow/company/" + companyId, (Object) event);
     }
+
+    /**
+     * Отправляет уведомление об обновлении роли пользователя
+     */
+    public void broadcastRoleUpdated(Long userId, String newRoleName, Integer newLevel) {
+        log.info("Broadcasting role updated event for user: {}", userId);
+
+        Map<String, Object> event = new HashMap<>();
+        event.put("type", "ROLE_UPDATED");
+        event.put("userId", userId);
+        event.put("roleName", newRoleName);
+        event.put("roleLevel", newLevel);
+        event.put("timestamp", LocalDateTime.now());
+
+        messagingTemplate.convertAndSend("/user/" + userId + "/workflow", (Object) event);
+    }
 }

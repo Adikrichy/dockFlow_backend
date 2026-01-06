@@ -19,9 +19,9 @@ public class ChatWebSocketController {
     private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
 
     /**
-     * WebSocket эндпоинт для отправки сообщений
-     * Клиент отправляет на: /app/chat.send/channelId/{channelId}
-     * Сообщение будет отправлено на: /topic/channel/{channelId}
+     * WebSocket endpoint for sending messages
+     * Client sends to: /app/chat.send/channelId/{channelId}
+     * Message will be sent to: /topic/channel/{channelId}
      */
     @MessageMapping("/chat.send/channelId/{channelId}")
     @SendTo("/topic/channel/{channelId}")
@@ -69,7 +69,7 @@ public class ChatWebSocketController {
     }
 
     /**
-     * Альтернативный формат с сообщением в body
+     * Alternative format with message in body
      */
     @MessageMapping("/chat/{channelId}")
     @SendTo("/topic/channel/{channelId}")

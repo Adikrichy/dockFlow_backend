@@ -101,14 +101,11 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<UserContextResponse> getMyContext(HttpServletRequest request){
+    public ResponseEntity<UserContextResponse> getMyContext(HttpServletRequest request, HttpServletResponse response){
         User user = authService.getCurrentUser();
 
         // Reload user with memberships to ensure they are loaded
         User userWithMemberships = authService.getUserWithMemberships(user.getEmail());
-
-        // Debug: Log memberships count
-        System.out.println("User memberships count: " + (userWithMemberships.getMemberships() != null ? userWithMemberships.getMemberships().size() : 0));
 
         List<CompanyMembershipResponse> companies = userWithMemberships.getMemberships() != null
                 ? userWithMemberships.getMemberships().stream()
@@ -122,10 +119,6 @@ public class AuthController {
                 .toList()
                 : java.util.Collections.emptyList();
 
-        // Debug: Log companies count
-        System.out.println("Companies response count: " + companies.size());
-
-        // ============ ИСПРАВЛЕНИЕ: проверяем cookie jwtWithCompany ============
         CompanyMembershipResponse currentCompany = null;
 
         // Получаем cookie jwtWithCompany
@@ -147,9 +140,42 @@ public class AuthController {
                         .filter(c -> c.getCompanyId().equals(companyIdFromToken))
                         .findFirst()
                         .orElse(null);
+
+                // ============ ИСПРАВЛЕНИЕ: Автоматическое обновление токена при смене роли ============
+                if (currentCompany != null) {
+                    Integer levelInToken = jwtService.extractCompanyRoleLevel(jwtWithCompany);
+                    String roleInToken = jwtService.extractCompanyRole(jwtWithCompany);
+
+                    // Если данные в токене устарели - перевыпускаем его
+                    if (!currentCompany.getRoleLevel().equals(levelInToken) ||
+                        !currentCompany.getRoleName().equals(roleInToken)) {
+                        
+                        System.out.println("Role mismatch detected! Token: " + roleInToken + "(" + levelInToken + 
+                                         "), DB: " + currentCompany.getRoleName() + "(" + currentCompany.getRoleLevel() + ")");
+                        
+                        java.util.Map<String, Object> claims = new java.util.HashMap<>();
+                        claims.put("sub", user.getEmail());
+                        claims.put("userId", user.getId());
+                        claims.put("userType", user.getUserType().name());
+                        claims.put("companyRole", currentCompany.getRoleName());
+                        claims.put("companyId", currentCompany.getCompanyId());
+                        claims.put("companyRoleLevel", currentCompany.getRoleLevel());
+
+                        String newToken = jwtService.generateCompanyToken(user, claims);
+                        authService.setCookie(response, "jwtWithCompany", newToken, 24 * 3600);
+                        System.out.println("Successfully refreshed jwtWithCompany cookie for user " + user.getEmail());
+                    }
+                } else {
+                    // User is no longer a member of this company - clear cookie
+                    authService.setCookie(response, "jwtWithCompany", "", 0);
+                    System.out.println("Cleared jwtWithCompany cookie for user " + user.getEmail() + " because they are no longer a member.");
+                }
+                // ============ КОНЕЦ ИСПРАВЛЕНИЯ ============
+            } else {
+                // Token has companyId but its null or invalid - clear cookie
+                authService.setCookie(response, "jwtWithCompany", "", 0);
             }
         }
-        // ============ КОНЕЦ ИСПРАВЛЕНИЯ ============
 
         UserResponse userResponse = UserResponse.builder()
                 .id(user.getId())
@@ -160,13 +186,13 @@ public class AuthController {
                 .companyRole(currentCompany != null ? currentCompany.getRoleName() : null)
                 .build();
 
-        UserContextResponse response = UserContextResponse.builder()
+        UserContextResponse userContextResponse = UserContextResponse.builder()
                 .user(userResponse)
                 .companies(companies)
                 .currentCompany(currentCompany)
                 .build();
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(userContextResponse);
     }
 
 

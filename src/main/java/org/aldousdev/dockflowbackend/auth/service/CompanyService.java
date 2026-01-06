@@ -23,4 +23,7 @@ public interface CompanyService {
     byte[] joinCompany(Long companyId);
     UpdateRoleResponse updateRole(Long companyId, UpdateRoleRequest request);
     void deleteRole(Long companyId);
+    List<CompanyResponse> listAll();
+    List<CompanyResponse> searchByName(String name);
+    void updateMemberRole(Long userId, Long roleId);
 }
