@@ -143,6 +143,32 @@ public class WorkflowAuditService {
     }
 
     @Transactional
+    public void logTaskAction(Task task, org.aldousdev.dockflowbackend.workflow.enums.ActionType actionType, User performedBy, String comment) {
+        log.info("Audit: Task {} action {} performed by {}", task.getId(), actionType, performedBy.getEmail());
+        
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("stepOrder", task.getStepOrder());
+        metadata.put("roleLevel", task.getRequiredRoleLevel());
+        metadata.put("actionTime", LocalDateTime.now());
+        if (comment != null) {
+            metadata.put("comment", comment);
+        }
+        
+        WorkflowAuditLog log = WorkflowAuditLog.builder()
+                .workflowInstance(task.getWorkflowInstance())
+                .task(task)
+                .performedBy(performedBy)
+                .actionType(actionType.name())
+                .description("Action " + actionType + " performed on task at step " + task.getStepOrder())
+                .metadata(toJson(metadata))
+                .ipAddress(getClientIp())
+                .createdAt(LocalDateTime.now())
+                .build();
+        
+        auditLogRepository.save(log);
+    }
+
+    @Transactional
     public void logWorkflowCompleted(WorkflowInstance instance) {
         log.info("Audit: Workflow {} completed", instance.getId());
         

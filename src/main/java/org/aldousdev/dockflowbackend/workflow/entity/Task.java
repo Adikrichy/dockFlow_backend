@@ -4,10 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.workflow.enums.TaskStatus;
+import org.aldousdev.dockflowbackend.workflow.enums.ActionType;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Getter
 @Setter
@@ -54,4 +57,11 @@ public class Task {
 
     @ManyToOne(fetch = FetchType.LAZY)
     private User completedBy;
+
+    @ElementCollection(targetClass = ActionType.class, fetch = FetchType.EAGER)
+    @Enumerated(EnumType.STRING)
+    @CollectionTable(name = "task_actions", joinColumns = @JoinColumn(name = "task_id"))
+    @Column(name = "action_type")
+    @Builder.Default
+    private Set<ActionType> availableActions = new HashSet<>();
 }

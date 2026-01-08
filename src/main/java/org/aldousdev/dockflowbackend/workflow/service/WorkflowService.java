@@ -11,7 +11,10 @@ import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.service.impls.CompanyServiceImpl;
 import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowTemplateRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.request.TaskActionRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
+import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
+import org.aldousdev.dockflowbackend.auth.entity.Membership;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowInstanceResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowTemplateResponse;
@@ -273,13 +276,15 @@ public class WorkflowService {
                 .findFirst()
                 .orElse(0);
 
-        // Get all PENDING and IN_PROGRESS tasks for the company
+        // Get all PENDING, IN_PROGRESS and CHANGES_REQUESTED tasks for the company
         List<Task> potentialTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
         List<Task> inProgressTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.IN_PROGRESS);
+        List<Task> changesRequestedTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.CHANGES_REQUESTED);
         
         java.util.List<Task> allTasks = new java.util.ArrayList<>();
         allTasks.addAll(potentialTasks);
         allTasks.addAll(inProgressTasks);
+        allTasks.addAll(changesRequestedTasks);
 
         // Filter by strict rules
         return allTasks.stream()
@@ -337,6 +342,52 @@ public class WorkflowService {
         eventBroadcaster.broadcastTaskAssigned(companyId, taskId, user.getId());
         
         return mapToTaskResponse(task);
+    }
+
+    /**
+     * Executes a generic action on a task
+     */
+    @Transactional
+    public TaskResponse executeTaskAction(Long taskId, TaskActionRequest request, User user) {
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found"));
+
+        // Validate that the user is assigned to this task or has admin rights
+        // simple validation: user must be the assignee
+        // Validate that the user is assigned to this task or has admin rights
+        boolean isAssignee = task.getAssignedTo() != null && task.getAssignedTo().getId().equals(user.getId());
+        
+        if (!isAssignee) {
+             Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
+             Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId, user.getId())
+                     .orElseThrow(() -> new org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException("You are not a member of this company context"));
+             
+             if (membership.getRole().getLevel() < 80) {
+                 throw new org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException("Task is not assigned to you and you don't have sufficient privileges (Level 80+) to override");
+             }
+        }
+        
+        // Also check if task is IN_PROGRESS or specifically CHANGES_REQUESTED (for resubmit)
+        boolean isResubmit = request.getActionType() == org.aldousdev.dockflowbackend.workflow.enums.ActionType.RESUBMIT;
+        
+        if (task.getStatus() != TaskStatus.IN_PROGRESS && 
+           !(task.getStatus() == TaskStatus.CHANGES_REQUESTED && isResubmit)) {
+            throw new IllegalStateException("Task is not in progress (Status: " + task.getStatus() + ")");
+        }
+        
+        // Check if the action is available for this task
+        // Special case: RESUBMIT is allowed if status is CHANGES_REQUESTED (regardless of XML config)
+        // Check if the action is available for this task
+        // Special case: RESUBMIT is allowed if status is CHANGES_REQUESTED (regardless of XML config)
+        boolean isResubmitAllowed = isResubmit && task.getStatus() == TaskStatus.CHANGES_REQUESTED;
+                           
+        if (!isResubmitAllowed && !task.getAvailableActions().contains(request.getActionType())) {
+            throw new IllegalArgumentException("Action " + request.getActionType() + " is not available for this task");
+        }
+
+        workflowEngine.executeAction(task, request, user);
+        
+        return mapToTaskResponse(taskRepository.save(task));
     }
 
     /**
@@ -539,6 +590,14 @@ public class WorkflowService {
                         .id(document.getId())
                         .filename(document.getOriginalFilename())
                         .build())
+                .document(TaskResponse.DocumentInfo.builder()
+                        .id(document.getId())
+                        .filename(document.getOriginalFilename())
+                        .build())
+                .templateId(task.getWorkflowInstance().getTemplate().getId())
+                .availableActions(task.getAvailableActions().stream()
+                        .map(Enum::toString)
+                        .collect(Collectors.toSet()))
                 .build();
     }
 

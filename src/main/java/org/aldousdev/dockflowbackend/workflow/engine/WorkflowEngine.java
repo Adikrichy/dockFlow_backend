@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
+import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
+import org.aldousdev.dockflowbackend.workflow.dto.request.TaskActionRequest;
 import org.aldousdev.dockflowbackend.workflow.entity.Document;
 import org.aldousdev.dockflowbackend.workflow.entity.RoutingRule;
 import org.aldousdev.dockflowbackend.workflow.entity.Task;
@@ -11,6 +13,8 @@ import org.aldousdev.dockflowbackend.workflow.entity.WorkflowInstance;
 import org.aldousdev.dockflowbackend.workflow.enums.RoutingType;
 import org.aldousdev.dockflowbackend.workflow.enums.TaskStatus;
 import org.aldousdev.dockflowbackend.workflow.enums.WorkFlowStatus;
+
+import org.aldousdev.dockflowbackend.workflow.enums.ActionType;
 import org.aldousdev.dockflowbackend.workflow.parser.ConditionEvaluator;
 import org.aldousdev.dockflowbackend.workflow.event.WorkflowEventBroadcaster;
 import org.aldousdev.dockflowbackend.workflow.parser.WorkflowXmlParser;
@@ -33,6 +37,7 @@ public class WorkflowEngine {
     private final TaskRepository taskRepository;
     private final RoutingRuleRepository routingRuleRepository;
     private final MembershipRepository membershipRepository;
+    private final UserRepository userRepository;
     private final WorkflowEventBroadcaster eventBroadcaster;
     private final WorkflowAuditService auditService;
     private final EmailNotificationService emailNotificationService;
@@ -93,6 +98,21 @@ public class WorkflowEngine {
                            WorkflowXmlParser.WorkflowStep step) {
         log.debug("Creating task for step {} - role {}", stepOrder, step.getRoleName());
 
+        // Calculate available actions first
+        java.util.Set<ActionType> actions = new java.util.HashSet<>();
+        actions.add(ActionType.APPROVE);
+        actions.add(ActionType.REJECT);
+        
+        if (step.getAllowedActions() != null) {
+            for (String actionStr : step.getAllowedActions()) {
+                try {
+                    actions.add(ActionType.valueOf(actionStr.toUpperCase()));
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid action type in XML: {}", actionStr);
+                }
+            }
+        }
+
         Task task = Task.builder()
                 .workflowInstance(instance)
                 .stepOrder(stepOrder)
@@ -100,6 +120,7 @@ public class WorkflowEngine {
                 .requiredRoleLevel(step.getRoleLevel())
                 .status(TaskStatus.PENDING)
                 .assignedBy(instance.getInitiatedBy())
+                .availableActions(actions)
                 .build();
 
         taskRepository.save(task);
@@ -163,6 +184,21 @@ public class WorkflowEngine {
                                          WorkflowXmlParser.WorkflowStep step, User assignedUser) {
         log.debug("Creating task for user {} at step {}", assignedUser.getEmail(), stepOrder);
 
+        // Calculate available actions first
+        java.util.Set<ActionType> actions = new java.util.HashSet<>();
+        actions.add(ActionType.APPROVE);
+        actions.add(ActionType.REJECT);
+        
+        if (step.getAllowedActions() != null) {
+            for (String actionStr : step.getAllowedActions()) {
+                try {
+                    actions.add(ActionType.valueOf(actionStr.toUpperCase()));
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid action type in XML: {}", actionStr);
+                }
+            }
+        }
+
         Task task = Task.builder()
                 .workflowInstance(instance)
                 .stepOrder(stepOrder)
@@ -171,7 +207,10 @@ public class WorkflowEngine {
                 .status(TaskStatus.PENDING)
                 .assignedBy(instance.getInitiatedBy())
                 .assignedTo(assignedUser) // Specific assignment
+                .availableActions(actions)
                 .build();
+
+
 
         taskRepository.save(task);
 
@@ -222,29 +261,32 @@ public class WorkflowEngine {
         // Send email notification
         emailNotificationService.notifyTaskApproved(task, approvedBy);
 
-        // Determine next step based on conditions
-        determineAndMoveToNextStep(task.getWorkflowInstance(), task, true);
-    }
+            // Determine next step based on conditions
+            determineAndMoveToNextStep(task.getWorkflowInstance(), task, true);
+        }
 
     /**
-     * Reject a task with routing rules application
+     * Reject a task
      */
     @Transactional
     public void rejectTask(Task task, User rejectedBy, String comment) {
         log.info("Rejecting task: {} by user: {}", task.getId(), rejectedBy.getEmail());
-
+        
         task.setStatus(TaskStatus.REJECTED);
-        task.setCompletedBy(rejectedBy);
         task.setCompletedAt(LocalDateTime.now());
+        task.setCompletedBy(rejectedBy);
         task.setComment(comment);
         taskRepository.save(task);
 
-        // Log rejection
-        auditService.logTaskRejected(task, rejectedBy, comment);
+        // Notify
+        Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
+        eventBroadcaster.broadcastTaskRejected(companyId, task.getId(), String.valueOf(rejectedBy.getId()));
         
-        // Send email notification
-        emailNotificationService.notifyTaskRejected(task, rejectedBy, comment);
+        // Handle routing based on rejection (e.g. stop workflow or go to specific step)
+        handleRouting(task, RoutingType.ON_REJECT);
+    }
 
+    private void handleRouting(Task task, RoutingType routingType) {
         WorkflowInstance instance = task.getWorkflowInstance();
 
         // Look for routing rule for this step and ON_REJECT type
@@ -252,39 +294,145 @@ public class WorkflowEngine {
                 .findByTemplateAndStepOrderAndRoutingType(
                         instance.getTemplate(),
                         task.getStepOrder(),
-                        RoutingType.ON_REJECT
+                        routingType
                 );
 
         if (rule.isPresent()) {
             RoutingRule routingRule = rule.get();
             Integer targetStep = routingRule.getTargetStep();
-
+            
             log.info("Applying routing rule: step {} -> targetStep {}", 
                 task.getStepOrder(), targetStep);
 
             if (targetStep == null) {
+               // Logic to complete/reject workflow handled in caller or determineNextStep
+               // But here rejectTask calls handleRouting which was missing.
+               // Re-implementing logic from deleted duplicate rejectTask:
+               
                 // Complete workflow as rejected
                 instance.setStatus(WorkFlowStatus.REJECTED);
                 instance.setCompletedAt(LocalDateTime.now());
                 log.info("Workflow rejected: {}", instance.getId());
                 
                 // Log workflow rejection
-                auditService.logWorkflowRejected(instance, comment);
+                auditService.logWorkflowRejected(instance, task.getComment());
                 
                 // Send email notification
-                emailNotificationService.notifyWorkflowRejected(instance, comment);
+                emailNotificationService.notifyWorkflowRejected(instance, task.getComment());
                 
                 Long companyId = instance.getDocument().getCompany().getId();
-                eventBroadcaster.broadcastWorkflowRejected(companyId, instance.getId(), comment);
+                eventBroadcaster.broadcastWorkflowRejected(companyId, instance.getId(), task.getComment());
             } else {
-                // Use conditional routing to return to a step
-                determineAndMoveToNextStep(instance, task, false);
+                 // Use conditional routing to return to a step
+                 determineAndMoveToNextStep(instance, task, false);
             }
         } else {
-            // Use conditional routing for reject
-            determineAndMoveToNextStep(instance, task, false);
+             // Use conditional routing for reject
+             determineAndMoveToNextStep(instance, task, false);
         }
     }
+
+    /**
+     * Executes a generic action (Delegate, Hold, etc.)
+     */
+    @Transactional
+    public void executeAction(Task task, TaskActionRequest request, User actor) {
+        log.info("Executing action {} on task {}", request.getActionType(), task.getId());
+        
+        switch (request.getActionType()) {
+            case DELEGATE:
+                handleDelegate(task, request, actor);
+                break;
+            case REQUEST_CHANGES:
+                handleRequestChanges(task, request, actor);
+                break;
+            case HOLD:
+                handleHold(task, request, actor);
+                break;
+            case RESUBMIT:
+                handleResubmit(task, request, actor);
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported action type: " + request.getActionType());
+        }
+    }
+
+    private void handleResubmit(Task task, TaskActionRequest request, User actor) {
+        // Reset to PENDING and clear assignment so it goes back to pool
+        task.setStatus(TaskStatus.PENDING);
+        task.setAssignedTo(null);
+        task.setComment(request.getComment());
+        taskRepository.save(task);
+
+        auditService.logTaskAction(task, ActionType.RESUBMIT, actor, "Resubmitted logic: " + request.getComment());
+        
+        // Notify role group that task is available again
+        Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
+        eventBroadcaster.broadcastTaskCreated(companyId, task.getId(), task.getRequiredRoleName());
+    }
+
+    private void handleDelegate(Task task, TaskActionRequest request, User actor) {
+        if (request.getTargetUserId() == null) {
+            throw new IllegalArgumentException("Target user ID is required for delegation");
+        }
+        
+        User targetUser = userRepository.findById(request.getTargetUserId())
+            .orElseThrow(() -> new IllegalArgumentException("Target user not found"));
+            
+        // Reassign
+        task.setAssignedTo(targetUser);
+        // We keep status IN_PROGRESS so the new user sees it
+        // Or we could reset to PENDING if we want them to "Claim" it? 
+        // Let's assume direct assignment -> IN_PROGRESS for that user.
+        taskRepository.save(task);
+        
+        auditService.logTaskAction(task, ActionType.DELEGATE, actor, 
+            "Delegated to " + targetUser.getEmail() + ". Comment: " + request.getComment());
+            
+        // Notify new assignee
+        eventBroadcaster.broadcastTaskAssigned(
+            task.getWorkflowInstance().getDocument().getCompany().getId(), 
+            task.getId(), 
+            targetUser.getId()
+        );
+    }
+
+    private void handleRequestChanges(Task task, TaskActionRequest request, User actor) {
+        // 1. Update status
+        task.setStatus(TaskStatus.CHANGES_REQUESTED);
+        task.setComment(request.getComment());
+        
+        // 2. Reassign to Initiator
+        User initiator = task.getWorkflowInstance().getInitiatedBy();
+        if (initiator != null) {
+            task.setAssignedTo(initiator);
+            log.info("Task {} reassigned to initiator {} for changes", task.getId(), initiator.getEmail());
+        } else {
+            log.warn("No initiator found for workflow instance {}, task {} remains assigned to current user", 
+                     task.getWorkflowInstance().getId(), task.getId());
+        }
+
+        taskRepository.save(task);
+        
+        // 3. Log action
+        auditService.logTaskAction(task, ActionType.REQUEST_CHANGES, actor, request.getComment());
+        
+        // 4. Notify Initiator
+        if (initiator != null) {
+            Long companyId = task.getWorkflowInstance().getDocument().getCompany().getId();
+            eventBroadcaster.broadcastTaskAssigned(companyId, task.getId(), initiator.getId());
+        }
+    }
+
+    private void handleHold(Task task, TaskActionRequest request, User actor) {
+        task.setStatus(TaskStatus.ON_HOLD);
+        task.setComment(request.getComment());
+        taskRepository.save(task);
+        
+        auditService.logTaskAction(task, ActionType.HOLD, actor, request.getComment());
+    }
+
+
 
     /**
      * Return workflow to a specific step

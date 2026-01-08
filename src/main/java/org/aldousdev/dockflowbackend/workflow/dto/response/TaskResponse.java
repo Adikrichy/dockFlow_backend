@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 @Builder
 public class TaskResponse {
     private Long id;
+    private Long templateId;
     private Integer stepOrder;
     private String requiredRoleName;
     private Integer requiredRoleLevel;
@@ -20,6 +21,8 @@ public class TaskResponse {
     private LocalDateTime completedAt;
     private String completedByName;
     private UserInfo assignedTo;
+    
+    private java.util.Set<String> availableActions;
 
     @Getter
     @Setter

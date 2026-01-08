@@ -20,6 +20,7 @@ import org.aldousdev.dockflowbackend.workflow.dto.request.CreateWorkflowTemplate
 import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowTemplateRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.TaskApprovalRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.request.UpdateWorkflowPermissionRequest;
+import org.aldousdev.dockflowbackend.workflow.dto.request.TaskActionRequest;
 import org.aldousdev.dockflowbackend.workflow.dto.response.BulkOperationResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.TaskResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogResponse;
@@ -351,19 +352,40 @@ public class WorkflowController {
     }
 
     /**
+     * POST /api/workflow/task/{taskId}/execute - выполнить произвольное действие
+     */
+    @PostMapping("/task/{taskId}/execute")
+    @RequiresRoleLevel(10)
+    @Operation(summary = "Выполнить действие над задачей", 
+            description = "Выполняет указанное действие (DELEGATE, REQUEST_CHANGES, etc.) над задачей.")
+    public ResponseEntity<TaskResponse> executeTaskAction(
+            @PathVariable Long taskId,
+            @RequestBody TaskActionRequest request,
+            Authentication authentication) {
+        
+        User user = userService.getUserByEmail(authentication.getName());
+        log.info("Executing action {} on task {} by user {}", request.getActionType(), taskId, user.getEmail());
+        
+        TaskResponse response = workflowService.executeTaskAction(taskId, request, user);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * POST /api/workflow/task/{taskId}/claim - забрать задачу себе
      */
     @PostMapping("/task/{taskId}/claim")
     @RequiresRoleLevel(10)
-    @Operation(summary = "Забрать задачу себе",
-            description = "Закрепляет задачу за текущим пользователем и меняет статус на IN_PROGRESS. " +
-                    "Требуется совпадение уровня роли.")
+    @Operation(summary = "Забрать задачу в работу (Claim)", 
+            description = "Назначает текущего пользователя исполнителем задачи (для задач из общего пула)")
     public ResponseEntity<TaskResponse> claimTask(
             @PathVariable Long taskId,
             Authentication authentication) {
-        log.info("Claiming task: {} by user: {}", taskId, authentication.getName());
+        
         User user = userService.getUserByEmail(authentication.getName());
-        return ResponseEntity.ok(workflowService.claimTask(taskId, user));
+        log.info("User {} claiming task {}", user.getEmail(), taskId);
+        
+        TaskResponse response = workflowService.claimTask(taskId, user);
+        return ResponseEntity.ok(response);
     }
 
     /**

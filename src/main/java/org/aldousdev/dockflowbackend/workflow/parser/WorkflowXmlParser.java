@@ -27,7 +27,9 @@ public class WorkflowXmlParser {
         private Integer roleLevel;
         private String action; // approve, review, sign, reject
         private boolean parallel;
+
         private String description;
+        private List<String> allowedActions; // e.g. "DELEGATE,REQUEST_CHANGES"
     }
 
     @Data
@@ -89,6 +91,14 @@ public class WorkflowXmlParser {
                 if (stepElement.hasAttribute("description")) {
                     step.setDescription(stepElement.getAttribute("description"));
                 }
+
+                if (stepElement.hasAttribute("allowedActions")) {
+                    String actionsStr = stepElement.getAttribute("allowedActions");
+                    if (actionsStr != null && !actionsStr.isEmpty()) {
+                        step.setAllowedActions(List.of(actionsStr.split(",")));
+                    }
+                }
+
 
                 validateStep(step);
                 steps.add(step);
