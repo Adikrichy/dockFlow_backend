@@ -6,6 +6,7 @@ import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.exceptions.CompanyNotFoundException;
+import org.aldousdev.dockflowbackend.workflow.entity.DocumentVersion;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import java.net.MalformedURLException;
@@ -62,23 +63,28 @@ public class DocumentServiceImpl implements DocumentService {
             throw new InvalidFileException("File cannot be empty");
         }
 
-        if (!"application/pdf".equals(file.getContentType())) {
-            log.warn("Attempted to upload non-PDF file: {}", file.getContentType());
-            throw new InvalidFileException("Only PDF files are supported. Received: " + file.getContentType());
+        String contentType = file.getContentType();
+        boolean isPdf = "application/pdf".equalsIgnoreCase(contentType);
+        boolean isDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document".equalsIgnoreCase(contentType)
+                || (file.getOriginalFilename() != null && file.getOriginalFilename().toLowerCase().endsWith(".docx"));
+
+        if (!isPdf && !isDocx) {
+            log.warn("Attempted to upload unsupported file: {}", contentType);
+            throw new InvalidFileException("Only PDF and DOCX files are supported. Received: " + contentType);
         }
 
         User currentUser = authService.getCurrentUser();
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if(!(authentication instanceof JwtAuthenticationToken jwtAuth)) {
             log.error("Invalid authentication token type for user: {}", currentUser.getEmail());
-            throw new RuntimeException("Invalid authentication token type");
+            throw new DocumentUploadException("Invalid authentication. Please re-login to your company.");
         }
         String token = jwtAuth.getToken();
         Long companyId = jwtService.extractCompanyId(token);
 
         if(companyId == null){
             log.error("Company ID not found in JWT token for user: {}", currentUser.getEmail());
-            throw new RuntimeException("Company not found in token");
+            throw new DocumentUploadException("No active company context. Please select a company first.");
         }
 
         try{
@@ -106,8 +112,9 @@ public class DocumentServiceImpl implements DocumentService {
             }
 
             Document document = Document.builder()
-                    .originalFilename(file.getOriginalFilename())
+                    .originalFilename(file.getOriginalFilename() != null ? file.getOriginalFilename() : "Untitled Document")
                     .filePath(filePath.toString())
+                    .contentType(isPdf ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                     .fileSize(file.getSize())
                     .company(company)
                     .uploadedBy(currentUser)
@@ -131,6 +138,7 @@ public class DocumentServiceImpl implements DocumentService {
             return DocumentResponse.builder()
                     .id(document.getId())
                     .originalFilename(document.getOriginalFilename())
+                    .contentType(document.getContentType())
                     .filePath(document.getFilePath())
                     .fileSize(document.getFileSize())
                     .uploadedAt(document.getUploadedAt())
@@ -173,6 +181,7 @@ public class DocumentServiceImpl implements DocumentService {
         return DocumentResponse.builder()
                 .id(document.getId())
                 .originalFilename(document.getOriginalFilename())
+                .contentType(document.getContentType())
                 .filePath(document.getFilePath())
                 .fileSize(document.getFileSize())
                 .uploadedAt(document.getUploadedAt())
@@ -188,18 +197,32 @@ public class DocumentServiceImpl implements DocumentService {
         Document document = documentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with ID: " + id));
         
+        return getResource(document.getFilePath());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Resource downloadDocumentVersion(Long documentId, Integer versionNumber) {
+        log.info("Downloading document {} version {}", documentId, versionNumber);
+        DocumentVersion version = documentVersioningService.getVersion(documentId, versionNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Version not found: " + versionNumber));
+
+        return getResource(version.getFilePath());
+    }
+
+    private Resource getResource(String filePath) {
         try {
-            Path path = Paths.get(document.getFilePath());
+            Path path = Paths.get(filePath);
             Resource resource = new UrlResource(path.toUri());
-            
+
             if (resource.exists() || resource.isReadable()) {
                 return resource;
             } else {
-                log.error("File not found or not readable: {}", document.getFilePath());
-                throw new RuntimeException("Could not read file: " + document.getFilePath());
+                log.error("File not found or not readable: {}", filePath);
+                throw new RuntimeException("Could not read file: " + filePath);
             }
         } catch (MalformedURLException e) {
-            log.error("Invalid file path: {}", document.getFilePath(), e);
+            log.error("Invalid file path: {}", filePath, e);
             throw new RuntimeException("Error: " + e.getMessage());
         }
     }

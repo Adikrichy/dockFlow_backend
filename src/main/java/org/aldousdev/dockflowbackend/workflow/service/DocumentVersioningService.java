@@ -95,6 +95,105 @@ public class DocumentVersioningService {
         return newVersion;
     }
 
+    @Transactional
+    public DocumentVersion createNewVersionFromFile(
+            Document document,
+            Path sourceFilePath,
+            String originalFilename,
+            String contentType,
+            User createdBy,
+            String changeDescription,
+            String changeType
+    ) throws IOException {
+
+        log.info("Creating new version (from file) for document {} by user {}", document.getId(), createdBy.getEmail());
+
+        Integer nextVersionNumber = getNextVersionNumber(document.getId());
+
+        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Files.createDirectories(versionDir);
+
+        String versionFileName = String.format("%s_v%d_%s",
+                document.getOriginalFilename(),
+                nextVersionNumber,
+                LocalDateTime.now().toString().replace(":", "-").replace(".", "-"));
+        Path versionFilePath = versionDir.resolve(versionFileName);
+
+        Files.copy(sourceFilePath, versionFilePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+        byte[] bytes = Files.readAllBytes(versionFilePath);
+        String sha256Hash = documentHashService.calculateSha256Hash(bytes);
+
+        DocumentVersion newVersion = DocumentVersion.builder()
+                .document(document)
+                .versionNumber(nextVersionNumber)
+                .filePath(versionFilePath.toString())
+                .originalFilename(originalFilename)
+                .contentType(contentType)
+                .fileSize(Files.size(versionFilePath))
+                .sha256Hash(sha256Hash)
+                .changeDescription(changeDescription)
+                .changeType(changeType)
+                .createdBy(createdBy)
+                .isCurrent(true)
+                .build();
+
+        newVersion = documentVersionRepository.save(newVersion);
+        updateCurrentVersion(document, newVersion);
+
+        log.info("Created version {} for document {}", nextVersionNumber, document.getId());
+        return newVersion;
+    }
+
+    @Transactional
+    public DocumentVersion createNewVersionFromBytes(
+            Document document,
+            byte[] fileBytes,
+            String originalFilename,
+            String contentType,
+            User createdBy,
+            String changeDescription,
+            String changeType
+    ) throws IOException {
+
+        log.info("Creating new version (from bytes) for document {} by user {}", document.getId(), createdBy.getEmail());
+
+        Integer nextVersionNumber = getNextVersionNumber(document.getId());
+
+        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Files.createDirectories(versionDir);
+
+        String versionFileName = String.format("%s_v%d_%s",
+                document.getOriginalFilename(),
+                nextVersionNumber,
+                LocalDateTime.now().toString().replace(":", "-").replace(".", "-"));
+        Path versionFilePath = versionDir.resolve(versionFileName);
+
+        Files.write(versionFilePath, fileBytes);
+
+        String sha256Hash = documentHashService.calculateSha256Hash(fileBytes);
+
+        DocumentVersion newVersion = DocumentVersion.builder()
+                .document(document)
+                .versionNumber(nextVersionNumber)
+                .filePath(versionFilePath.toString())
+                .originalFilename(originalFilename)
+                .contentType(contentType)
+                .fileSize((long) fileBytes.length)
+                .sha256Hash(sha256Hash)
+                .changeDescription(changeDescription)
+                .changeType(changeType)
+                .createdBy(createdBy)
+                .isCurrent(true)
+                .build();
+
+        newVersion = documentVersionRepository.save(newVersion);
+        updateCurrentVersion(document, newVersion);
+
+        log.info("Created version {} for document {}", nextVersionNumber, document.getId());
+        return newVersion;
+    }
+
     /**
      * Создает версию с watermark
      */
@@ -269,6 +368,17 @@ public class DocumentVersioningService {
         versionToRestore.setIsCurrent(true);
         documentVersionRepository.save(versionToRestore);
 
+        // ОБНОВЛЕНИЕ ОСНОВНОГО ДОКУМЕНТА
+        Document document = versionToRestore.getDocument();
+        // Важно: копируем путь и метаданные обратно в основной документ, чтобы скачивание работало корректно
+        document.setFilePath(versionToRestore.getFilePath());
+        document.setContentType(versionToRestore.getContentType());
+        document.setFileSize(versionToRestore.getFileSize());
+        // Если бы у нас было поле hash в документе, мы бы и его обновили.
+        // document.setSha256Hash(versionToRestore.getSha256Hash());
+        
+        documentRepository.save(document);
+
         log.info("Restored version {} as current for document {}", versionNumber, documentId);
     }
 
@@ -288,5 +398,12 @@ public class DocumentVersioningService {
                 .forEach(v -> v.setIsCurrent(false));
 
         documentVersionRepository.saveAll(existingVersions);
+
+        // Update the main document to point to the new version's file
+        // This ensures that "Edit" and "Download" always use the latest version
+        document.setFilePath(newCurrentVersion.getFilePath());
+        document.setFileSize(newCurrentVersion.getFileSize());
+        document.setContentType(newCurrentVersion.getContentType());
+        documentRepository.save(document);
     }
 }

@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 public class DocumentResponse {
     private Long id;
     private String originalFilename;
+    private String contentType;
     private String filePath;
     private Long fileSize;
     private LocalDateTime uploadedAt;

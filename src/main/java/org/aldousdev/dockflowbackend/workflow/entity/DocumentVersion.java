@@ -48,7 +48,7 @@ public class DocumentVersion {
     @Column(name = "file_size")
     private Long fileSize;
 
-    @Column(length = 64, unique = true)
+    @Column(length = 64)
     private String sha256Hash;
 
     @Column(length = 500)

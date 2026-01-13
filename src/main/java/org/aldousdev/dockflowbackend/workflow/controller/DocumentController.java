@@ -38,6 +38,7 @@ public class DocumentController {
     private final AuthServiceImpl authService;
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequiresRoleLevel(10) // All workers and above
     @Operation(summary = "Upload a PDF document", description = "Uploads a PDF file to the system. Only company members can upload.")
     public ResponseEntity<DocumentResponse> uploadDocument(
             @Parameter(
@@ -82,10 +83,55 @@ public class DocumentController {
     public ResponseEntity<Resource> downloadDocument(@PathVariable Long documentId) {
         log.info("Downloading file for document: {}", documentId);
         Resource resource = documentService.downloadDocument(documentId);
-        
+
+        var document = documentService.getDocumentEntity(documentId);
+        MediaType mediaType;
+        try {
+            mediaType = document.getContentType() != null
+                    ? MediaType.parseMediaType(document.getContentType())
+                    : MediaType.APPLICATION_OCTET_STREAM;
+        } catch (Exception e) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+
+        String filename = document.getOriginalFilename() != null
+                ? document.getOriginalFilename()
+                : (resource.getFilename() != null ? resource.getFilename() : "document");
+
         return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(resource);
+    }
+
+    @GetMapping("/{documentId}/versions/{versionNumber}/download")
+    @RequiresRoleLevel(10)
+    @Operation(summary = "Download document version", description = "Returns the file content for a specific version")
+    public ResponseEntity<Resource> downloadDocumentVersion(
+            @PathVariable Long documentId,
+            @PathVariable Integer versionNumber) {
+        log.info("Downloading file for document: {} version: {}", documentId, versionNumber);
+        
+        Resource resource = documentService.downloadDocumentVersion(documentId, versionNumber);
+        var version = documentVersioningService.getVersion(documentId, versionNumber)
+                .orElseThrow(() -> new RuntimeException("Version found in service but not here? Should not happen due to service check"));
+
+        MediaType mediaType;
+        try {
+            mediaType = version.getContentType() != null
+                    ? MediaType.parseMediaType(version.getContentType())
+                    : MediaType.APPLICATION_OCTET_STREAM;
+        } catch (Exception e) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+
+        String filename = version.getOriginalFilename() != null
+                ? version.getOriginalFilename()
+                : (resource.getFilename() != null ? resource.getFilename() : "document_v" + versionNumber);
+
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .body(resource);
     }
 

@@ -13,4 +13,5 @@ public interface DocumentService {
     Document getDocumentEntity(Long id);
     List<DocumentResponse> getCompanyDocuments(Long companyId);
     Resource downloadDocument(Long id);
+    Resource downloadDocumentVersion(Long documentId, Integer versionNumber);
 }
