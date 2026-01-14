@@ -38,4 +38,14 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findPendingTasksByCompanyId(
             @Param("companyId") Long companyId,
             @Param("status") TaskStatus status);
+
+    List<Task> findByCreatedAtBetween(java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
+
+    List<Task> findByCompletedAtBetween(java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
+
+    @Query("SELECT t FROM Task t JOIN t.workflowInstance wi JOIN wi.document d WHERE d.company.id = :companyId AND t.createdAt BETWEEN :startDate AND :endDate")
+    List<Task> findByCompanyIdAndCreatedAtBetween(@Param("companyId") Long companyId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT t FROM Task t JOIN t.workflowInstance wi JOIN wi.document d WHERE d.company.id = :companyId AND t.completedAt BETWEEN :startDate AND :endDate")
+    List<Task> findByCompanyIdAndCompletedAtBetween(@Param("companyId") Long companyId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
 }

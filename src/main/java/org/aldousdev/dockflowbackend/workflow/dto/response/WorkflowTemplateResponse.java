@@ -23,4 +23,5 @@ public class WorkflowTemplateResponse {
     private String createdByName;
     private boolean isActive;
     private boolean canStart;
+    private boolean canManage;
 }

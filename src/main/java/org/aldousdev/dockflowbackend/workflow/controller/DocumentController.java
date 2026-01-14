@@ -80,7 +80,9 @@ public class DocumentController {
     @GetMapping("/{documentId}/download")
     @RequiresRoleLevel(10)
     @Operation(summary = "Download document file", description = "Returns the actual PDF file content")
-    public ResponseEntity<Resource> downloadDocument(@PathVariable Long documentId) {
+    public ResponseEntity<Resource> downloadDocument(
+            @PathVariable Long documentId,
+            @RequestParam(defaultValue = "false") boolean preview) {
         log.info("Downloading file for document: {}", documentId);
         Resource resource = documentService.downloadDocument(documentId);
 
@@ -98,10 +100,18 @@ public class DocumentController {
                 ? document.getOriginalFilename()
                 : (resource.getFilename() != null ? resource.getFilename() : "document");
 
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .body(resource);
+        if (filename.toLowerCase().endsWith(".pdf")) {
+            mediaType = MediaType.APPLICATION_PDF;
+        }
+
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .contentType(mediaType);
+
+        if (!preview) {
+            responseBuilder.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+        }
+
+        return responseBuilder.body(resource);
     }
 
     @GetMapping("/{documentId}/versions/{versionNumber}/download")
@@ -109,7 +119,8 @@ public class DocumentController {
     @Operation(summary = "Download document version", description = "Returns the file content for a specific version")
     public ResponseEntity<Resource> downloadDocumentVersion(
             @PathVariable Long documentId,
-            @PathVariable Integer versionNumber) {
+            @PathVariable Integer versionNumber,
+            @RequestParam(defaultValue = "false") boolean preview) {
         log.info("Downloading file for document: {} version: {}", documentId, versionNumber);
         
         Resource resource = documentService.downloadDocumentVersion(documentId, versionNumber);
@@ -129,10 +140,18 @@ public class DocumentController {
                 ? version.getOriginalFilename()
                 : (resource.getFilename() != null ? resource.getFilename() : "document_v" + versionNumber);
 
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .body(resource);
+        if (filename.toLowerCase().endsWith(".pdf")) {
+            mediaType = MediaType.APPLICATION_PDF;
+        }
+
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .contentType(mediaType);
+
+        if (!preview) {
+            responseBuilder.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+        }
+
+        return responseBuilder.body(resource);
     }
 
     @PostMapping("/{documentId}/versions")

@@ -12,4 +12,8 @@ import java.util.List;
 public interface DocumentRepository extends JpaRepository<Document, Long> {
     @Query("SELECT d FROM Document d WHERE d.company.id = :companyId")
     List<Document> findByCompanyId(@Param("companyId") Long companyId);
+
+    List<Document> findByUploadedAtBetween(java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
+    List<Document> findByUploadedAtAfter(java.time.LocalDateTime date);
+    List<Document> findByCompanyIdAndUploadedAtBetween(Long companyId, java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
 }

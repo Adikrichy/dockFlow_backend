@@ -29,4 +29,7 @@ public interface SecurityAuditRepository extends JpaRepository<SecurityAuditLog,
 
     @Query("SELECT COUNT(s) FROM SecurityAuditLog s WHERE s.eventType = 'LOGIN_FAILED' AND s.ipAddress = :ipAddress AND s.timestamp > :since")
     long countFailedLoginsByIpSince(@Param("ipAddress") String ipAddress, @Param("since") LocalDateTime since);
+
+    @Query("SELECT COUNT(DISTINCT s.user) FROM SecurityAuditLog s WHERE s.timestamp > :date")
+    long countDistinctByTimestampAfter(@Param("date") LocalDateTime date);
 }

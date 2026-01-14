@@ -160,17 +160,36 @@ public class WorkflowService {
                 .findFirst()
                 .orElse(null);
 
+        if (userRoleLevel == null) {
+            log.warn("User {} tried to access templates of company {} without membership", currentUser.getEmail(), companyId);
+            throw new org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException("You are not a member of this company");
+        }
+
 
         
         return templateRepository.findByCompanyIdAndIsActive(companyId, true)
                 .stream()
+                .filter(template -> {
+                    boolean isCreator = template.getCreatedBy().getId().equals(currentUser.getId());
+                    boolean isAdmin = userRoleLevel >= 100;
+                    boolean canStart = template.canStartWorkflow(userRoleLevel);
+                    
+                    // User sees the template if they created it, are admin, or can start it
+                    return isCreator || isAdmin || canStart;
+                })
                 .map(template -> {
                     WorkflowTemplateResponse response = mapToTemplateResponse(template);
                     String createdByName = template.getCreatedBy() != null
                             ? template.getCreatedBy().getFirstName()
                             : "System";
                     response.setCreatedByName(createdByName);
-                    response.setCanStart(template.canStartWorkflow(userRoleLevel));
+                    response.setCanStart(template.canStartWorkflow(userRoleLevel)); // Checks allowedRoleLevels
+                    
+                    // Logic for canManage: Creator OR Admin (Level >= 100)
+                    boolean isCreator = template.getCreatedBy().getId().equals(currentUser.getId());
+                    boolean isAdmin = userRoleLevel != null && userRoleLevel >= 100;
+                    response.setCanManage(isCreator || isAdmin);
+                    
                     return response;
                 })
                 .collect(Collectors.toList());

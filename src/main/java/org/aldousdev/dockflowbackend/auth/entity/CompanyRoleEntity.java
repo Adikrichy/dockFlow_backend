@@ -22,4 +22,7 @@ public class CompanyRoleEntity {
     @ManyToOne
     @JoinColumn(name = "company_id")
     private Company company;
+
+    @Builder.Default
+    private Boolean canViewReports = false;
 }
