@@ -43,7 +43,8 @@ public class JwtFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         return path.startsWith("/api/document-edit/file/") ||
-                path.startsWith("/api/document-edit/onlyoffice/callback/");
+                path.startsWith("/api/document-edit/onlyoffice/callback/") ||
+                path.startsWith("/api/internal/");
     }
 
     @Override

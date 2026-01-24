@@ -15,9 +15,23 @@ public interface DocumentEditSessionRepository extends JpaRepository<DocumentEdi
 
     Optional<DocumentEditSession> findByOnlyofficeKey(String onlyofficeKey);
 
-    @Query("SELECT s FROM DocumentEditSession s WHERE s.document.id = :documentId AND s.status = :status ORDER BY s.createdAt DESC")
     List<DocumentEditSession> findByDocumentIdAndStatus(
             @Param("documentId") Long documentId,
+            @Param("status") EditSessionStatus status
+    );
+
+    @Query("SELECT s FROM DocumentEditSession s WHERE s.document.id = :documentId AND s.baseVersionNumber = :versionNumber AND s.status = :status ORDER BY s.createdAt DESC")
+    List<DocumentEditSession> findByDocumentIdAndBaseVersionNumberAndStatus(
+            @Param("documentId") Long documentId,
+            @Param("versionNumber") Integer versionNumber,
+            @Param("status") EditSessionStatus status
+    );
+
+    @Query("SELECT s FROM DocumentEditSession s WHERE s.document.id = :documentId AND s.baseVersionNumber = :versionNumber AND s.createdBy.id = :userId AND s.status = :status ORDER BY s.createdAt DESC")
+    List<DocumentEditSession> findByDocumentIdAndBaseVersionNumberAndUserIdAndStatus(
+            @Param("documentId") Long documentId,
+            @Param("versionNumber") Integer versionNumber,
+            @Param("userId") Long userId,
             @Param("status") EditSessionStatus status
     );
 }

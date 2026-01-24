@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
 import org.aldousdev.dockflowbackend.auth.service.impls.AuthServiceImpl;
+import org.aldousdev.dockflowbackend.ai.service.AiFacade;
 import org.aldousdev.dockflowbackend.document_edit.dto.CommitEditSessionRequest;
 import org.aldousdev.dockflowbackend.document_edit.dto.CommitEditSessionResponse;
 import org.aldousdev.dockflowbackend.document_edit.dto.EditorConfigResponse;
@@ -31,10 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +46,7 @@ public class DocumentEditService {
     private final AuthServiceImpl authService;
     private final DocumentVersioningService documentVersioningService;
     private final OnlyOfficeClient onlyOfficeClient;
+    private final AiFacade aiFacade;
 
     @Value("${file.upload.dir:./uploads}")
     private String uploadDir;
@@ -68,9 +67,10 @@ public class DocumentEditService {
     private final jakarta.persistence.EntityManager entityManager;
 
     @Transactional
-    public StartEditSessionResponse startSession(Long documentId) {
+    public synchronized StartEditSessionResponse startSession(Long documentId, Integer versionNumber) {
         User user = authService.getCurrentUser();
-        log.info("Starting edit session for document {} by user {}", documentId, user.getEmail());
+        log.info("Starting edit session for document {} (version: {}) by user {}", 
+                documentId, versionNumber != null ? versionNumber : "current", user.getEmail());
 
         Document document = documentRepository.findById(documentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with ID: " + documentId));
@@ -80,19 +80,33 @@ public class DocumentEditService {
             throw new IllegalStateException("Only DOCX documents can be edited in editor");
         }
 
-        // Find all active sessions for this document
-        List<DocumentEditSession> existingSessions = sessionRepository.findByDocumentIdAndStatus(documentId, EditSessionStatus.ACTIVE);
+        // Find source file path: specific version or latest
+        String sourceFilePath;
+        Integer baseVersionToUse;
+
+        if (versionNumber != null) {
+            DocumentVersion version = documentVersioningService.getVersion(documentId, versionNumber)
+                    .orElseThrow(() -> new ResourceNotFoundException("Version " + versionNumber + " not found"));
+            sourceFilePath = version.getFilePath();
+            baseVersionToUse = versionNumber;
+        } else {
+            // Default to current version
+            DocumentVersion currentVersion = documentVersioningService.getCurrentVersion(documentId)
+                    .orElseThrow(() -> new IllegalStateException("No current version found for document"));
+            sourceFilePath = currentVersion.getFilePath();
+            baseVersionToUse = currentVersion.getVersionNumber();
+        }
+
+        // Find existing active session for this specific document, version, AND user (no co-editing)
+        List<DocumentEditSession> existingSessions = sessionRepository.findByDocumentIdAndBaseVersionNumberAndUserIdAndStatus(
+                documentId, baseVersionToUse, user.getId(), EditSessionStatus.ACTIVE);
         
         if (!existingSessions.isEmpty()) {
-            // Force close ALL existing sessions to ensure a fresh start with OnlyOffice
-            // This prevents "UpdateVersion expired" and stale key issues
-            log.warn("Found {} active sessions for document {}, closing ALL of them to start fresh", existingSessions.size(), documentId);
-            
-            for (DocumentEditSession oldSession : existingSessions) {
-                oldSession.setStatus(EditSessionStatus.COMMITTED); // Or DISCARDED if we want to be explicit
-                sessionRepository.save(oldSession);
-                log.info("Closed old session {} for document {}", oldSession.getSessionKey(), documentId);
-            }
+            // Reuse existing session for THIS user only
+            DocumentEditSession existingSession = existingSessions.get(0);
+            log.info("Found active session {} for document {} V{} by user {}. Reusing.", 
+                    existingSession.getSessionKey(), documentId, baseVersionToUse, user.getEmail());
+            return StartEditSessionResponse.builder().sessionKey(existingSession.getSessionKey()).build();
         }
 
         String sessionKey = UUID.randomUUID().toString().replace("-", "");
@@ -108,7 +122,7 @@ public class DocumentEditService {
             }
 
             Path workingPath = sessionsDir.resolve(sessionKey + "_" + baseName);
-            Path sourcePath = Paths.get(document.getFilePath());
+            Path sourcePath = Paths.get(sourceFilePath);
             
             if (!Files.exists(sourcePath)) {
                 log.error("Source document file not found: {}", sourcePath);
@@ -116,7 +130,7 @@ public class DocumentEditService {
             }
             
             Files.copy(sourcePath, workingPath, StandardCopyOption.REPLACE_EXISTING);
-            log.info("Copied document to working path: {}", workingPath);
+            log.info("Copied document (V{}) to working path: {}", baseVersionToUse, workingPath);
 
             DocumentEditSession session = DocumentEditSession.builder()
                     .document(document)
@@ -125,12 +139,13 @@ public class DocumentEditService {
                     .onlyofficeKey(onlyofficeKey)
                     .workingDocxPath(workingPath.toString())
                     .status(EditSessionStatus.ACTIVE)
+                    .baseVersionNumber(baseVersionToUse)
                     .createdAt(LocalDateTime.now())
                     .updatedAt(LocalDateTime.now())
                     .build();
 
             sessionRepository.save(session);
-            log.info("Created edit session {} for document {}", sessionKey, documentId);
+            log.info("Created edit session {} for document {} base version {}", sessionKey, documentId, baseVersionToUse);
 
             return StartEditSessionResponse.builder().sessionKey(sessionKey).build();
         } catch (Exception e) {
@@ -172,6 +187,13 @@ public class DocumentEditService {
 
         Map<String, Object> editorConfig = new HashMap<>();
         editorConfig.put("mode", "edit");
+        
+        // Fast co-editing mode ensures changes are synced to the Document Server immediately
+        // This is required for 'forcesave' command to work correctly.
+        Map<String, Object> coEditing = new HashMap<>();
+        coEditing.put("mode", "fast");
+        editorConfig.put("coEditing", coEditing);
+
         editorConfig.put("callbackUrl", callbackUrl);
         editorConfig.put("user", userMap);
 
@@ -192,7 +214,11 @@ public class DocumentEditService {
         config.put("documentServerUrl", onlyOfficeDocsUrl);
 
         log.info("Returning editor config for session {}", sessionKey);
-        log.info("Generated editor config for session {}: {}", sessionKey, config); // <-- Добавьте это
+        log.info("Generated editor config for session {}: {}", sessionKey, config);
+
+//        Map<String, Object> config = generateEditorConfig(session, user);
+//        log.info("Returning editor config for session {}", sessionKey);
+//        log.debug("Generated editor config: {}", config);
         return EditorConfigResponse.builder().config(config).build();
     }
 
@@ -202,6 +228,7 @@ public class DocumentEditService {
                 .orElseThrow(() -> new ResourceNotFoundException("Session not found for key"));
 
         if (session.getStatus() != EditSessionStatus.ACTIVE) {
+            log.warn("Received callback for non-active session {} (status: {}). Ignoring.", onlyofficeKey, session.getStatus());
             return;
         }
 
@@ -218,7 +245,8 @@ public class DocumentEditService {
         // Validate DOCX structure (ZIP header: PK..)
         if (bytes.length < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B) { // 'P' 'K'
             String contentPreview = new String(bytes, 0, Math.min(bytes.length, 200), StandardCharsets.UTF_8);
-            log.error("Downloaded file from OnlyOffice is NOT a valid DOCX/ZIP. URL: {}. Content preview: {}", downloadUrl, contentPreview);
+            log.error("Downloaded file from OnlyOffice is NOT a valid DOCX/ZIP for session {}. URL: {}. Content preview: {}", 
+                    onlyofficeKey, downloadUrl, contentPreview);
             throw new RuntimeException("Downloaded file is corrupted or not a DOCX. See logs for content preview.");
         }
 
@@ -226,7 +254,9 @@ public class DocumentEditService {
             Files.write(Paths.get(session.getWorkingDocxPath()), bytes);
             session.setUpdatedAt(LocalDateTime.now());
             sessionRepository.save(session);
+            log.info("Successfully updated working file for session {} from OnlyOffice callback", onlyofficeKey);
         } catch (Exception e) {
+            log.error("Failed to write edited file for session {}: {}", onlyofficeKey, e.getMessage(), e);
             throw new RuntimeException("Failed to save edited file: " + e.getMessage(), e);
         }
     }
@@ -238,6 +268,21 @@ public class DocumentEditService {
         DocumentEditSession session = sessionRepository.findBySessionKey(sessionKey)
                 .orElseThrow(() -> new ResourceNotFoundException("Edit session not found"));
 
+        if (session.getStatus() == EditSessionStatus.COMMITTED) {
+            log.info("Session {} already committed. Returning existing info.", sessionKey);
+            // Try to find the latest version created by this user for this document recently
+            DocumentVersion lastVersion = documentVersioningService.getDocumentVersions(session.getDocument().getId())
+                    .stream()
+                    .filter(v -> v.getCreatedBy().getId().equals(user.getId()))
+                    .findFirst()
+                    .orElse(null);
+
+            return CommitEditSessionResponse.builder()
+                    .docxVersionId(lastVersion != null ? lastVersion.getId() : null)
+                    .pdfVersionId(null)
+                    .build();
+        }
+
         if (session.getStatus() != EditSessionStatus.ACTIVE) {
             throw new IllegalStateException("Edit session is not active");
         }
@@ -247,23 +292,35 @@ public class DocumentEditService {
         log.info("Triggering FORCE SAVE for session {}", sessionKey);
         LocalDateTime beforeSave = session.getUpdatedAt();
         
-        onlyOfficeClient.executeCommand("forcesave", session.getOnlyofficeKey());
+        int forceSaveResult = onlyOfficeClient.executeCommand("forcesave", session.getOnlyofficeKey());
 
-        // Wait for callback to update the session (max 15 seconds)
-        try {
-            for (int i = 0; i < 30; i++) {
-                Thread.sleep(500); // 30 * 500ms = 15 seconds
-                
-                // Force refresh from DB to bypass first-level cache
-                entityManager.refresh(session);
-                
-                if (session.getUpdatedAt().isAfter(beforeSave)) {
-                    log.info("Session updated via callback at {}. Proceeding to commit.", session.getUpdatedAt());
-                    break;
+        boolean saved = false;
+        if (forceSaveResult == 4) {
+            log.info("OnlyOffice returned error 4 (no changes) for session {}. Procceding with current content.", sessionKey);
+            saved = true; // Proceed with whatever content is in the working file
+        } else {
+            // Wait for callback to update the session (max 15 seconds)
+            try {
+                for (int i = 0; i < 30; i++) {
+                    Thread.sleep(500); // 30 * 500ms = 15 seconds
+                    
+                    // Force refresh from DB to bypass first-level cache
+                    entityManager.refresh(session);
+                    
+                    if (session.getUpdatedAt().isAfter(beforeSave)) {
+                        log.info("Session updated via OnlyOffice callback at {}. Proceeding to commit.", session.getUpdatedAt());
+                        saved = true;
+                        break;
+                    }
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        }
+
+        if (!saved) {
+            log.error("FORCE SAVE failed for session {}. OnlyOffice did not send callback in time.", sessionKey);
+            throw new IllegalStateException("Failed to save changes: OnlyOffice editor did not respond to save request. Please try again in 5 seconds.");
         }
         // --- FORCE SAVE LOGIC END ---
 
@@ -299,6 +356,15 @@ public class DocumentEditService {
         session.setUpdatedAt(LocalDateTime.now());
         sessionRepository.save(session);
 
+        // Request AI analysis for the SPECIFIC version
+        try {
+            aiFacade.requestDocumentAnalyze(document.getId(), document.getCompany().getId());
+            // TODO: Ideally AiFacade should support versionId, but for now we follow the existing pattern
+            // and maybe update AiFacade later if needed.
+        } catch (Exception e) {
+            log.error("Failed to request AI analysis for committed version", e);
+        }
+
         return CommitEditSessionResponse.builder()
                 .docxVersionId(docxVersion.getId())
                 .pdfVersionId(null)
@@ -331,7 +397,7 @@ public class DocumentEditService {
             }
 
             // Set expiration to 24 hours to avoid "UpdateVersion expired" for long sessions
-            builder.setExpiration(new java.util.Date(System.currentTimeMillis() + 86400000)); // 24 hours
+            builder.expiration(new java.util.Date(System.currentTimeMillis() + 86400000)); // 24 hours
 
             return builder.signWith(secretKey).compact();
         } catch (Exception e) {
@@ -339,4 +405,109 @@ public class DocumentEditService {
             throw new RuntimeException("Failed to generate token", e);
         }
     }
+
+//    private Map<String,Object> generateEditorConfig(DocumentEditSession session, User user) {
+//        Map<String,Object> config = new HashMap<>();
+//
+//        Map<String, Object> document = new HashMap<>();
+//        document.put("title", session.getDocument().getOriginalFilename());
+//        document.put("fileType", "docx");
+//        document.put("key", session.getOnlyofficeKey());
+//        document.put("url", internalBaseUrl + "/api/document-edit/file/" + session.getSessionKey());
+//
+//        Map<String, Object> permissions = new HashMap<>();
+//        permissions.put("edit", true);
+//        permissions.put("download", true);
+//        permissions.put("print", true);
+//        permissions.put("review", true);
+//        permissions.put("comment", true);
+//        permissions.put("fillForms", true);
+//        permissions.put("modifyFilter", true);
+//        permissions.put("modifyContentControl", true);
+//        document.put("permissions", permissions);
+//
+//        Map<String, Object> fileAccessClaims = new HashMap<>();
+//        fileAccessClaims.put("sessionKey", session.getSessionKey());
+//        String fileToken = generateToken(fileAccessClaims);
+//        document.put("token", fileToken);
+//
+//        config.put("document", document);
+//        config.put("documentType", "word");
+//
+//        Map<String, Object> editorConfig = new HashMap<>();
+//        editorConfig.put("mode", "edit");
+//        editorConfig.put("lang", "ru");
+//        editorConfig.put("callbackUrl", internalBaseUrl + "/api/document-edit/onlyoffice/callback/" + session.getSessionKey());
+//
+//        Map<String, Object> userInfo = new HashMap<>();
+//        userInfo.put("id", String.valueOf(user.getId()));
+//        userInfo.put("name", user.getFirstName() + " " + user.getLastName());
+//        editorConfig.put("user", userInfo);
+//
+//        Map<String, Object> customization = new HashMap<>();
+//
+//        Map<String, Object> customer = new HashMap<>();
+//        customer.put("name", "DockFlow");
+//        customer.put("address", "Manasa 34");
+//        customer.put("mail", "adil.erzhanoc.70@gmail.com");
+//        customer.put("www", "dockflow.com");
+//        customer.put("info", "System of automatization of Workflow and Document ");
+//        customer.put("logo", publicBaseUrl + "/images/logo.png");
+//        customer.put("logoUrl", publicBaseUrl);
+//        customization.put("customer", customer);
+//
+//        Map<String, Object> logo = new HashMap<>();
+//        logo.put("image", publicBaseUrl + "/images/dockflow-editor-logo.svg");
+//        logo.put("imageEmbedded", publicBaseUrl + "/images/dockflow-icon.svg");
+//        logo.put("imageDark", publicBaseUrl + "/images/dockflow-logo-dark.svg");
+//        logo.put("url", publicBaseUrl + "/documents");
+//        logo.put("visible" , true);
+//        customization.put("logo", logo);
+//
+//        customization.put("about", true);
+//        customization.put("feedback", false);
+//        customization.put("help", false);
+//
+//        customization.put("forcesave", true);
+//        customization.put("autosave", true);
+//
+//        Map<String, Object> goback = new HashMap<>();
+//        goback.put("blank", false);
+//        goback.put("text", "go back to documents");
+//        goback.put("url", publicBaseUrl + "/documents");
+//        customization.put("goback", goback);
+//
+//        customization.put("compactHeader", false);
+//        customization.put("compactToolbar", false);
+//        customization.put("hideRightMenu", false);
+//        customization.put("hideRulers", false);
+//        customization.put("unit", "cm");
+//
+//        Map<String, Object> features = new HashMap<>();
+//        features.put("spellcheck", true);
+//        features.put("roles", true);
+//        customization.put("features", features);
+//
+//        List<String> styles = List.of(publicBaseUrl + "/css/onlyoffice-custom.css");
+//        customization.put("styles", styles);
+//
+//        customization.put("comments", true);
+//        customization.put("mentionShare", true);
+//
+//        Map<String, Object> review = new HashMap<>();
+//        review.put("showReviewChanges", true);
+//        review.put("reviewDisplay", "markup");
+//        review.put("trackChanges", true);
+//        customization.put("review", review);
+//
+//        editorConfig.put("customization", customization);
+//        config.put("editorConfig", editorConfig);
+//
+//        String configToken = generateToken(config);
+//        config.put("token", configToken);
+//        config.put("documentServerUrl", onlyOfficeDocsUrl);
+//        return config;
+//    }
+
+
 }

@@ -172,6 +172,28 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+<!--        &lt;!&ndash; Jackson 3: databind (JsonMapper, PropertyNamingStrategies, SerializationFeature) &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>tools.jackson.core</groupId>-->
+<!--            <artifactId>jackson-databind</artifactId>-->
+<!--            <version>3.0.3</version>-->
+<!--        </dependency>-->
+
+
+<!--        &lt;!&ndash; Jackson 3: Java Time (JavaTimeModule) &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>tools.jackson.datatype</groupId>-->
+<!--            <artifactId>jackson-datatype-jsr310</artifactId>-->
+<!--            <version>3.0.0-rc2</version>-->
+<!--        </dependency>-->
+
+
+
 
     </dependencies>
 

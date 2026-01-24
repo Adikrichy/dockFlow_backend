@@ -40,4 +40,6 @@ public interface DocumentVersionRepository extends JpaRepository<DocumentVersion
 
     @Query("SELECT COUNT(dv) FROM DocumentVersion dv JOIN dv.document d WHERE d.company.id = :companyId AND dv.createdAt BETWEEN :startDate AND :endDate")
     long countByCompanyIdAndCreatedAtBetween(@Param("companyId") Long companyId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    Optional<DocumentVersion> findByIdAndDocumentId(Long id, Long documentId);
 }

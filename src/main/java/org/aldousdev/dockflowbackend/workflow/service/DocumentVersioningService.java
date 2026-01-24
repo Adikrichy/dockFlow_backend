@@ -46,8 +46,14 @@ public class DocumentVersioningService {
         // Получаем номер следующей версии
         Integer nextVersionNumber = getNextVersionNumber(document.getId());
 
-        // Создаем директорию для версий
-        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        // Create version directory: uploads/company-ID/document-FILENAME/versions
+        Path docPath = Paths.get(document.getFilePath());
+        Path companyDocRoot = docPath.getParent();
+        if (companyDocRoot.getFileName().toString().equals("versions")) {
+             // If filePath already points inside a versions folder (e.g. after restore), go up
+             companyDocRoot = companyDocRoot.getParent();
+        }
+        Path versionDir = companyDocRoot.resolve("versions");
         Files.createDirectories(versionDir);
 
         // Генерируем имя файла для версии
@@ -110,7 +116,12 @@ public class DocumentVersioningService {
 
         Integer nextVersionNumber = getNextVersionNumber(document.getId());
 
-        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Path docPath = Paths.get(document.getFilePath());
+        Path companyDocRoot = docPath.getParent();
+        if (companyDocRoot.getFileName().toString().equals("versions")) {
+            companyDocRoot = companyDocRoot.getParent();
+        }
+        Path versionDir = companyDocRoot.resolve("versions");
         Files.createDirectories(versionDir);
 
         String versionFileName = String.format("%s_v%d_%s",
@@ -160,7 +171,12 @@ public class DocumentVersioningService {
 
         Integer nextVersionNumber = getNextVersionNumber(document.getId());
 
-        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Path docPath = Paths.get(document.getFilePath());
+        Path companyDocRoot = docPath.getParent();
+        if (companyDocRoot.getFileName().toString().equals("versions")) {
+            companyDocRoot = companyDocRoot.getParent();
+        }
+        Path versionDir = companyDocRoot.resolve("versions");
         Files.createDirectories(versionDir);
 
         String versionFileName = String.format("%s_v%d_%s",
@@ -215,7 +231,12 @@ public class DocumentVersioningService {
 
         // Создаем новую версию с watermark
         Integer nextVersionNumber = getNextVersionNumber(document.getId());
-        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Path docPath = Paths.get(document.getFilePath());
+        Path companyDocRoot = docPath.getParent();
+        if (companyDocRoot.getFileName().toString().equals("versions")) {
+            companyDocRoot = companyDocRoot.getParent();
+        }
+        Path versionDir = companyDocRoot.resolve("versions");
         Files.createDirectories(versionDir);
 
         String versionFileName = String.format("%s_v%d_watermarked_%s",
@@ -273,7 +294,12 @@ public class DocumentVersioningService {
 
         // Создаем новую версию с подписью
         Integer nextVersionNumber = getNextVersionNumber(document.getId());
-        Path versionDir = Paths.get(document.getFilePath()).getParent().resolve("versions");
+        Path docPath = Paths.get(document.getFilePath());
+        Path companyDocRoot = docPath.getParent();
+        if (companyDocRoot.getFileName().toString().equals("versions")) {
+            companyDocRoot = companyDocRoot.getParent();
+        }
+        Path versionDir = companyDocRoot.resolve("versions");
         Files.createDirectories(versionDir);
 
         String versionFileName = String.format("%s_v%d_signed_%s",

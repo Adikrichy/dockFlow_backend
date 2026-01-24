@@ -2,6 +2,7 @@ package org.aldousdev.dockflowbackend.workflow.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aldousdev.dockflowbackend.ai.service.AiFacade;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
@@ -48,6 +49,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final JWTService jwtService;
     private final DocumentVersioningService documentVersioningService;
     private final DocumentHashService documentHashService;
+    private final AiFacade aiFacade;
+
 
     @Value("${file.upload.dir}")
     private String uploadDir;
@@ -122,6 +125,7 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
 
             document = documentRepository.save(document);
+            aiFacade.requestDocumentAnalyze(document.getId(), companyId);
 
             // Create the first version of the document
             try {

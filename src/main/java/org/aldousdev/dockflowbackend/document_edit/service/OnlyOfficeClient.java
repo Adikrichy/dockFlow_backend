@@ -38,6 +38,7 @@ public class OnlyOfficeClient {
     private String jwtSecret;
 
     public byte[] downloadFile(String url) {
+        log.info("Downloading file from OnlyOffice: {}", url);
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -47,8 +48,10 @@ public class OnlyOfficeClient {
 
             HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info("Successfully downloaded {} bytes from {}", response.body().length, url);
                 return response.body();
             }
+            log.error("Failed to download file from OnlyOffice. Status: {}, URL: {}", response.statusCode(), url);
             throw new IllegalStateException("Failed to download file, status=" + response.statusCode());
         } catch (Exception e) {
             throw new RuntimeException("Failed to download OnlyOffice file: " + e.getMessage(), e);
@@ -106,7 +109,7 @@ public class OnlyOfficeClient {
         }
     }
 
-    public void executeCommand(String command, String key) {
+    public int executeCommand(String command, String key) {
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("c", command);
@@ -138,14 +141,16 @@ public class OnlyOfficeClient {
             @SuppressWarnings("unchecked")
             Map<String, Object> json = objectMapper.readValue(response.body(), Map.class);
             Object error = json.get("error");
-            if (error != null && !String.valueOf(error).equals("0")) {
-                log.error("Command returned error: {}", error);
-                // We don't throw exception strictly to avoid blocking commit if forceSave fails (e.g. if no changes)
+            if (error instanceof Number && ((Number) error).intValue() != 0) {
+                int errorCode = ((Number) error).intValue();
+                log.error("OnlyOffice command '{}' returned error: {}", command, errorCode);
+                return errorCode;
             }
 
+            return 0; // Success or no specific error code
         } catch (Exception e) {
             log.error("Failed to execute OnlyOffice command: {}", e.getMessage(), e);
-            // Non-blocking
+            return -1; // Indicate a general failure due to exception
         }
     }
 

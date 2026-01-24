@@ -1,0 +1,12 @@
+/* Скрыть OnlyOffice брендинг */
+.asc-window-title:contains("ONLYOFFICE"),
+div[id*="about-modal"],
+.about-box {
+    display: none !important;
+}
+
+/* Заменить текст */
+.asc-loadmask-title::after {
+    content: "DockFlow Document Editor";
+    color: #3b82f6;
+}

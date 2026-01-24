@@ -30,7 +30,7 @@ public class DocumentEditController {
 
     @PostMapping("/session/start")
     public ResponseEntity<StartEditSessionResponse> start(@RequestBody StartEditSessionRequest request) {
-        return ResponseEntity.ok(documentEditService.startSession(request.getDocumentId()));
+        return ResponseEntity.ok(documentEditService.startSession(request.getDocumentId(), request.getVersionNumber()));
     }
 
     @GetMapping("/session/{sessionKey}/config")

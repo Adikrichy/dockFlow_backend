@@ -28,6 +28,7 @@ public class SecurityConfig {
     private final JwtFilter jwtFilter;
     private final RateLimitingFilter rateLimitingFilter;
     private final OnlyOfficeJwtFilter onlyOfficeJwtFilter;
+    private final ServiceJwtFilter serviceJwtFilter;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -46,6 +47,23 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS,"/**").permitAll()
                         .anyRequest().permitAll())  // PermitAll для этих путей
                 .addFilterBefore(onlyOfficeJwtFilter, UsernamePasswordAuthenticationFilter.class)  // Только OnlyOffice фильтр
+                .httpBasic(httpBasic -> httpBasic.disable());
+
+        return http.build();
+    }
+
+    @Order(2)
+    @Bean
+    public SecurityFilterChain internalApiSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .securityMatcher("/api/internal/**")
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .anyRequest().authenticated())
+                .addFilterBefore(serviceJwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .httpBasic(httpBasic -> httpBasic.disable());
 
         return http.build();

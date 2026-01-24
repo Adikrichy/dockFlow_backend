@@ -50,4 +50,7 @@ public class DocumentEditSession {
 
     @Column(name = "committed_at")
     private LocalDateTime committedAt;
+
+    @Column(name = "base_version_number")
+    private Integer baseVersionNumber;
 }

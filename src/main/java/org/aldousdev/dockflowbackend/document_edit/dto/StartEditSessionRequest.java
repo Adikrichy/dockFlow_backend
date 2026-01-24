@@ -5,4 +5,5 @@ import lombok.Data;
 @Data
 public class StartEditSessionRequest {
     private Long documentId;
+    private Integer versionNumber;
 }
