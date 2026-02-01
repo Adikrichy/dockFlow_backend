@@ -14,6 +14,7 @@ import java.util.Optional;
 public interface ChatChannelRepository extends JpaRepository<ChatChannel, Long> {
     List<ChatChannel> findByCompany(Company company);
     Optional<ChatChannel> findByIdAndCompany(Long id, Company company);
+    Optional<ChatChannel> findByNameAndCompany(String name, Company company);
     List<ChatChannel> findByCompanyAndTypeAndIsPublicTrue(Company company, ChatChannel.ChannelType type);
     
     @Query("SELECT c FROM ChatChannel c JOIN c.members m1 JOIN c.members m2 WHERE c.type = 'DM' AND m1 = :user1 AND m2 = :user2")

@@ -12,6 +12,12 @@ import org.aldousdev.dockflowbackend.workflow.entity.Document;
 import org.aldousdev.dockflowbackend.workflow.entity.DocumentVersion;
 import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
 import org.aldousdev.dockflowbackend.workflow.repository.DocumentVersionRepository;
+import org.aldousdev.dockflowbackend.chat.repository.ChatChannelRepository;
+import org.aldousdev.dockflowbackend.chat.repository.MessageRepository;
+import org.aldousdev.dockflowbackend.chat.service.ChatService;
+import org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO;
+import org.aldousdev.dockflowbackend.chat.entity.ChatChannel;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,13 +36,16 @@ public class DocumentAiAnalysisService {
     private final DocumentVersionRepository documentVersionRepository;
 
     private final AuthService authService;
+    private final ChatService chatService;
+    private final ChatChannelRepository chatChannelRepository;
+    private final MessageRepository messageRepository;
+    private final org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     /**
      * Start AI analysis for a specific document version.
      *
      * IMPORTANT:
      * - versionId here is the PRIMARY KEY of documents_versions.id (not version_number).
-     * - In your DB example: documents_versions.id=47, version_number=2, document_id=302
      */
     public AiAnalysisResponse startDocumentAnalysis(Long documentId, Long versionId, String provider) {
         User user = getCurrentUser();
@@ -48,29 +57,30 @@ public class DocumentAiAnalysisService {
                 user.getEmail()
         );
 
-        // 1) Load document (you can later enforce company scope here)
         Document document = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("Document not found"));
         Long companyId = document.getCompany().getId();
 
-        log.info("AI analyze request: documentId={}, versionId={}, companyId={}", documentId, versionId, companyId);
+        // Load DocumentVersion (with fallback)
+        DocumentVersion version;
+        if (versionId == null || versionId.equals(documentId) || versionId <= 0) {
+            log.info("No valid versionId provided for analysis, falling back to current version for document {}", documentId);
+            version = documentVersionRepository.findCurrentVersionByDocumentId(documentId)
+                    .orElseThrow(() -> new RuntimeException("Current version not found for document " + documentId));
+        } else {
+            version = documentVersionRepository.findByIdAndDocumentId(versionId, documentId)
+                    .orElseThrow(() -> new RuntimeException("Version " + versionId + " not found for document " + documentId));
+        }
+        final Long actualVersionId = version.getId();
 
-        // 2) Load DocumentVersion by PK AND verify it belongs to this document
-        // This avoids the classic confusion: versionId (PK) vs versionNumber (logical version)
-        DocumentVersion version = documentVersionRepository.findByIdAndDocumentId(versionId, documentId)
-                .orElseThrow(() -> new RuntimeException("Version not found"));
-
-        // 3) Create unique correlationId for async processing (RabbitMQ)
         String correlationId = String.format("doc-analyze-%d-%d-%d",
-                documentId, versionId, System.currentTimeMillis());
+                documentId, actualVersionId, System.currentTimeMillis());
 
-        // 4) Create DB record first (or update existing one)
-        // This avoids uq_doc_version unique constraint violation
-        DocumentAiAnalysis analysis = analysisRepository.findByDocumentIdAndVersionId(documentId, versionId)
+        DocumentAiAnalysis analysis = analysisRepository.findByDocumentIdAndVersionId(documentId, actualVersionId)
                 .orElse(new DocumentAiAnalysis());
 
         analysis.setDocumentId(documentId);
-        analysis.setVersionId(versionId);
+        analysis.setVersionId(actualVersionId);
         analysis.setCompanyId(companyId);
         analysis.setCorrelationId(correlationId);
         analysis.setStatus("PENDING");
@@ -80,11 +90,9 @@ public class DocumentAiAnalysisService {
 
         analysis = analysisRepository.save(analysis);
 
-        // 5) Send task to AI service via RabbitMQ
-        // Producer generates internal URL and service JWT token
         aiTaskProducer.sendDocumentAnalyze(
                 documentId,
-                versionId,
+                actualVersionId,
                 null,
                 version.getOriginalFilename(),
                 version.getContentType(),
@@ -92,6 +100,60 @@ public class DocumentAiAnalysisService {
                 companyId,
                 correlationId,
                 provider
+        );
+
+        return mapToResponse(analysis);
+    }
+
+    public AiAnalysisResponse startDocumentReview(Long documentId, Long versionId, String provider, String topic) {
+        User user = getCurrentUser();
+
+        log.info("Starting AI document review: documentId={}, versionId={}, provider={}, topic={}, user={}",
+                documentId, versionId, provider != null ? provider : "default", topic, user.getEmail());
+
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+        Long companyId = document.getCompany().getId();
+
+        // Load DocumentVersion (with fallback)
+        DocumentVersion version;
+        if (versionId == null || versionId.equals(documentId) || versionId <= 0) {
+            log.info("No valid versionId provided for review, falling back to current version for document {}", documentId);
+            version = documentVersionRepository.findCurrentVersionByDocumentId(documentId)
+                    .orElseThrow(() -> new RuntimeException("Current version not found for document " + documentId));
+        } else {
+            version = documentVersionRepository.findByIdAndDocumentId(versionId, documentId)
+                    .orElseThrow(() -> new RuntimeException("Version " + versionId + " not found for document " + documentId));
+        }
+        final Long actualVersionId = version.getId();
+
+        String correlationId = String.format("rev-%d-%d-%d",
+                documentId, actualVersionId, System.currentTimeMillis());
+
+        DocumentAiAnalysis analysis = analysisRepository.findByDocumentIdAndVersionId(documentId, actualVersionId)
+                .orElse(new DocumentAiAnalysis());
+
+        analysis.setDocumentId(documentId);
+        analysis.setVersionId(actualVersionId);
+        analysis.setCompanyId(companyId);
+        analysis.setCorrelationId(correlationId);
+        analysis.setStatus("PENDING");
+        analysis.setSummary(null);
+        analysis.setRawResult(null);
+        analysis.setError(null);
+
+        analysis = analysisRepository.save(analysis);
+
+        aiTaskProducer.sendDocumentReview(
+                documentId,
+                actualVersionId,
+                version.getOriginalFilename(),
+                version.getContentType(),
+                version.getFileSize(),
+                companyId,
+                correlationId,
+                provider,
+                topic
         );
 
         return mapToResponse(analysis);
@@ -123,5 +185,91 @@ public class DocumentAiAnalysisService {
 
     private User getCurrentUser() {
         return authService.getCurrentUser();
+    }
+
+    @Transactional
+    public ChatMessageDTO sendDocumentChatMessage(Long documentId, Long versionId, String content) {
+        User user = getCurrentUser();
+        var document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+        
+        // Load DocumentVersion metadata (with fallback)
+        DocumentVersion version;
+        if (versionId == null || versionId.equals(documentId) || versionId <= 0) {
+            log.info("No valid versionId provided for chat, falling back to current version for document {}", documentId);
+            version = documentVersionRepository.findCurrentVersionByDocumentId(documentId)
+                    .orElseThrow(() -> new RuntimeException("Current version not found for document " + documentId));
+        } else {
+            version = documentVersionRepository.findByIdAndDocumentId(versionId, documentId)
+                    .orElseThrow(() -> new RuntimeException("Version " + versionId + " not found for document " + documentId));
+        }
+
+        final Long finalVersionId = version.getId();
+
+        // Find or create a hidden channel for this document
+        String channelName = "AI-Chat-Doc-" + documentId;
+        var company = document.getCompany();
+        
+        ChatChannel channel = chatChannelRepository.findByNameAndCompany(channelName, company)
+                .orElseGet(() -> {
+                    ChatChannel newChannel = ChatChannel.builder()
+                            .name(channelName)
+                            .description("AI Document Discussion: " + document.getOriginalFilename())
+                            .company(company)
+                            .isPublic(false) // Keep it hidden from general list
+                            .type(ChatChannel.ChannelType.CHANNEL)
+                            .members(java.util.List.of(user))
+                            .build();
+                    return chatChannelRepository.save(newChannel);
+                });
+
+        // Save user message
+        ChatMessageDTO userMessage = chatService.saveMessage(channel.getId(), content, user);
+        userMessage.setAi(false);
+        
+        // Broadcast user message to channel
+        messagingTemplate.convertAndSend("/topic/channel/" + channel.getId(), userMessage);
+        
+        // Send task to AI with full context
+        aiTaskProducer.sendChatMessage(
+                content, 
+                channel.getId(), 
+                user.getId(), 
+                user.getFirstName() + " " + user.getLastName(), 
+                documentId, 
+                finalVersionId, 
+                version.getOriginalFilename(),
+                version.getContentType(),
+                version.getFileSize(),
+                company.getId(),
+                "DOCUMENT"
+        );
+
+        return userMessage;
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.List<ChatMessageDTO> getDocumentChatHistory(Long documentId) {
+        var document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+        
+        String channelName = "AI-Chat-Doc-" + documentId;
+        var company = document.getCompany();
+        
+        return chatChannelRepository.findByNameAndCompany(channelName, company)
+                .map(channel -> {
+                    return messageRepository.findByChannel(channel).stream()
+                            .map(m -> ChatMessageDTO.builder()
+                                     .id(m.getId())
+                                     .content(m.getContent())
+                                     .senderId(m.getSender().getId())
+                                     .senderName(m.getSender().getFirstName() + " " + m.getSender().getLastName())
+                                     .channelId(channel.getId())
+                                     .timestamp(m.getCreatedAt())
+                                     .type("CHAT")
+                                     .isAi(m.getSender().getEmail().equals("ai@dockflow.com"))
+                                     .build())
+                            .toList();
+                }).orElse(java.util.Collections.emptyList());
     }
 }

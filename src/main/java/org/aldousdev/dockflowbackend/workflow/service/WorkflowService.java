@@ -19,20 +19,12 @@ import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowAuditLogRespo
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowInstanceResponse;
 import org.aldousdev.dockflowbackend.workflow.dto.response.WorkflowTemplateResponse;
 import org.aldousdev.dockflowbackend.workflow.engine.WorkflowEngine;
-import org.aldousdev.dockflowbackend.workflow.entity.Document;
-import org.aldousdev.dockflowbackend.workflow.entity.RoutingRule;
-import org.aldousdev.dockflowbackend.workflow.entity.Task;
-import org.aldousdev.dockflowbackend.workflow.entity.WorkflowInstance;
-import org.aldousdev.dockflowbackend.workflow.entity.WorkflowTemplate;
+import org.aldousdev.dockflowbackend.workflow.entity.*;
 import org.aldousdev.dockflowbackend.workflow.enums.RoutingType;
 import org.aldousdev.dockflowbackend.workflow.enums.TaskStatus;
 import org.aldousdev.dockflowbackend.workflow.event.WorkflowEventBroadcaster;
 import org.aldousdev.dockflowbackend.workflow.parser.WorkflowXmlParser;
-import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
-import org.aldousdev.dockflowbackend.workflow.repository.RoutingRuleRepository;
-import org.aldousdev.dockflowbackend.workflow.repository.TaskRepository;
-import org.aldousdev.dockflowbackend.workflow.repository.WorkflowInstanceRepository;
-import org.aldousdev.dockflowbackend.workflow.repository.WorkflowTemplateRepository;
+import org.aldousdev.dockflowbackend.workflow.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +42,7 @@ public class WorkflowService {
     private final TaskRepository taskRepository;
     private final UserRepository userRepository;
     private final DocumentRepository documentRepository;
+    private final DocumentVersionRepository documentVersionRepository;
     private final RoutingRuleRepository routingRuleRepository;
     private final WorkflowEngine workflowEngine;
     private final WorkflowEventBroadcaster eventBroadcaster;
@@ -608,10 +601,10 @@ public class WorkflowService {
                 .document(TaskResponse.DocumentInfo.builder()
                         .id(document.getId())
                         .filename(document.getOriginalFilename())
-                        .build())
-                .document(TaskResponse.DocumentInfo.builder()
-                        .id(document.getId())
-                        .filename(document.getOriginalFilename())
+                        .contentType(document.getContentType())
+                        .versionId(documentVersionRepository.findCurrentVersionByDocumentId(document.getId())
+                                .map(DocumentVersion::getId)
+                                .orElse(null))
                         .build())
                 .templateId(task.getWorkflowInstance().getTemplate().getId())
                 .availableActions(task.getAvailableActions().stream()

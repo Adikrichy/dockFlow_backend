@@ -18,6 +18,9 @@ import java.nio.charset.StandardCharsets;
 public class AiResultListener {
 
     private final DocumentAiAnalysisRepository repo;
+    private final org.aldousdev.dockflowbackend.chat.service.ChatService chatService;
+    private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
+    private final org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     @RabbitListener(queues = AiRabbitConfig.CORE_RESULTS_QUEUE)
     @Transactional
@@ -62,14 +65,99 @@ public class AiResultListener {
                 // Set status LAST to ensure frontend doesn't see SUCCESS until data is ready
                 entity.setStatus("SUCCESS");
             } else if("ERROR".equalsIgnoreCase(result.getStatus())) {
-                log.error("AI analysis error for correlation_id={}: {}", result.getCorrelationId(), result.getError());
+                String errorMsg = result.getError();
+                log.error("AI analysis error for correlation_id={}: {}", result.getCorrelationId(), errorMsg);
+                
+                // Truncate error if too long to ensure it saves
+                if (errorMsg != null && errorMsg.length() > 5000) {
+                    errorMsg = errorMsg.substring(0, 5000) + "... [TRUNCATED]";
+                }
+                
                 entity.setStatus("ERROR");
-                entity.setError(result.getError());
+                entity.setError(errorMsg);
             }
 
-            repo.save(entity);
+            try {
+                repo.save(entity);
+            } catch (Exception e) {
+                log.error("Failed to save analysis result for correlation_id={}", result.getCorrelationId(), e);
+                // Try to save just the error status if allow
+                try {
+                     entity.setStatus("ERROR");
+                     entity.setError("Database save failed: " + e.getMessage());
+                     entity.setRawResult(null);
+                     entity.setSummary(null);
+                     repo.save(entity);
+                } catch (Exception ex) {
+                     log.error("CRITICAL: Failed to recover save for correlation_id={}", result.getCorrelationId(), ex);
+                }
+            }
         }, () -> {
-            log.warn("No DocumentAiAnalysis row found for correlation_id={}", result.getCorrelationId());
+            if ("CHAT_RESPONSE".equalsIgnoreCase(result.getStatus())) {
+                handleChatResponse(result);
+            } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null && result.getCorrelationId().startsWith("chat-")) {
+                handleChatError(result);
+            } else {
+                // Ignore "PROCESSING" status for records we don't track in DocumentAiAnalysis (like general chat)
+                if (!"PROCESSING".equalsIgnoreCase(result.getStatus())) {
+                    log.warn("No DocumentAiAnalysis row found for correlation_id={}", result.getCorrelationId());
+                }
+            }
         });
+    }
+
+    private void handleChatError(AiResultDto result) {
+        try {
+            log.info("Handling CHAT ERROR for correlation_id={}", result.getCorrelationId());
+            // Extract channelId from correlationId: "chat-{channelId}-{timestamp}"
+            String[] parts = result.getCorrelationId().split("-");
+            if (parts.length >= 2) {
+                Long channelId = Long.valueOf(parts[1]);
+                
+                org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO errorDto = new org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO();
+                errorDto.setChannelId(channelId);
+                errorDto.setContent("AI Error: " + (result.getError() != null ? result.getError() : "Unknown AI failure"));
+                errorDto.setAi(true);
+                errorDto.setStatus("error");
+                errorDto.setTimestamp(java.time.LocalDateTime.now());
+
+                // Push to WebSocket so frontend knows to stop "thinking"
+                messagingTemplate.convertAndSend("/topic/channel/" + channelId, errorDto);
+                log.info("Sent AI error notification to channel {}", channelId);
+            }
+        } catch (Exception e) {
+            log.error("Failed to process CHAT ERROR", e);
+        }
+    }
+
+    private void handleChatResponse(AiResultDto result) {
+        try {
+            log.info("Handling CHAT_RESPONSE: {}", result);
+            java.util.Map<String, Object> data = result.getResult();
+            if (data == null) {
+                log.error("Chat response has no data");
+                return;
+            }
+
+            Long channelId = Long.valueOf(data.get("channel_id").toString());
+            String responseText = (String) data.get("response");
+            
+            // AI User (we need to find it or create a placeholder)
+            // For now, let's look up by email or use a system user
+            org.aldousdev.dockflowbackend.auth.entity.User aiUser = userRepository.findByEmail("ai@dockflow.com")
+                    .orElseThrow(() -> new RuntimeException("AI User not found"));
+
+            // Save message
+            org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO messageDto = 
+                    chatService.saveMessage(channelId, responseText, aiUser);
+            messageDto.setAi(true);
+            messageDto.setStatus("sent");
+
+            // Push to WebSocket
+            messagingTemplate.convertAndSend("/topic/channel/" + channelId, messageDto);
+
+        } catch (Exception e) {
+            log.error("Failed to process CHAT_RESPONSE", e);
+        }
     }
 }

@@ -286,7 +286,7 @@ public class CompanyServiceImpl implements CompanyService {
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException("Company not found"));
 
-        return membershipRepository.findByCompany(company).stream()
+        List<UserResponse> members = membershipRepository.findByCompany(company).stream()
                 .map(m -> {
                     User u = m.getUser();
                     return UserResponse.builder()
@@ -294,10 +294,27 @@ public class CompanyServiceImpl implements CompanyService {
                             .email(u.getEmail())
                             .firstName(u.getFirstName())
                             .lastName(u.getLastName())
-                            .companyRole(m.getRole().getName())
+                            .companyRole(m.getRole() != null ? m.getRole().getName() : "MEMBER")
                             .build();
                 })
                 .collect(Collectors.toList());
+
+        // Add AI Assistant to the list if it exists
+        userRepository.findByEmail("ai@dockflow.com").ifPresent(ai -> {
+            boolean alreadyPresent = members.stream()
+                    .anyMatch(m -> m.getEmail().equalsIgnoreCase(ai.getEmail()));
+            if (!alreadyPresent) {
+                members.add(0, UserResponse.builder()
+                        .id(ai.getId())
+                        .email(ai.getEmail())
+                        .firstName(ai.getFirstName())
+                        .lastName(ai.getLastName())
+                        .companyRole("AI Assistant")
+                        .build());
+            }
+        });
+
+        return members;
     }
 
     @Override

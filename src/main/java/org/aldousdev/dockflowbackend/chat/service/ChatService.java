@@ -183,6 +183,17 @@ public class ChatService {
                 .toList();
     }
 
+    public Object getAiUser() {
+        return userRepository.findByEmail("ai@dockflow.com")
+                .map(u -> java.util.Map.of(
+                        "id", u.getId(),
+                        "firstName", u.getFirstName(),
+                        "lastName", u.getLastName(),
+                        "email", u.getEmail()
+                ))
+                .orElseThrow(() -> new RuntimeException("AI User not initialized"));
+    }
+
     private ChatChannelResponse channelToResponse(ChatChannel channel) {
         return channelToResponse(channel, null);
     }

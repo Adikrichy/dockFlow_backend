@@ -83,4 +83,11 @@ public class ChatController {
         var message = chatService.editMessage(messageId, content);
         return ResponseEntity.ok(message);
     }
+    /**
+     * Получить информацию о пользователе ИИ (для фронтенда)
+     */
+    @GetMapping("/ai")
+    public ResponseEntity<?> getAiUser() {
+        return ResponseEntity.ok(chatService.getAiUser());
+    }
 }

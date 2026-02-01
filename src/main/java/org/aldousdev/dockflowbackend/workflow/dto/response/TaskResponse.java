@@ -39,6 +39,8 @@ public class TaskResponse {
     @Builder
     public static class DocumentInfo {
         private Long id;
+        private Long versionId;
         private String filename;
+        private String contentType;
     }
 }

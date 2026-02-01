@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.ai.dto.AiAnalysisResponse;
 import org.aldousdev.dockflowbackend.ai.service.DocumentAiAnalysisService;
 import org.springframework.http.ResponseEntity;
+import org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -29,6 +30,21 @@ public class DocumentAiAnalysisController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/{documentId}/versions/{versionId}/review")
+    public ResponseEntity<AiAnalysisResponse> startReview(
+            @PathVariable Long documentId,
+            @PathVariable Long versionId,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String topic) {
+
+        log.info("Received AI review request for document {} version {} (topic: {})", 
+            documentId, versionId, topic);
+
+        AiAnalysisResponse response = aiAnalysisService.startDocumentReview(documentId, versionId, provider, topic);
+
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{documentId}/versions/{versionId}/analysis")
     public ResponseEntity<AiAnalysisResponse> getAnalysis(
             @PathVariable Long documentId,
@@ -36,6 +52,17 @@ public class DocumentAiAnalysisController {
 
         AiAnalysisResponse response = aiAnalysisService.getAnalysisResult(documentId, versionId);
 
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{documentId}/versions/{versionId}/chat")
+    public ResponseEntity<ChatMessageDTO> startChat(
+            @PathVariable Long documentId,
+            @PathVariable Long versionId,
+            @RequestBody String content) {
+        
+        log.info("Received AI document chat request for {} version {}", documentId, versionId);
+        ChatMessageDTO response = aiAnalysisService.sendDocumentChatMessage(documentId, versionId, content);
         return ResponseEntity.ok(response);
     }
 }

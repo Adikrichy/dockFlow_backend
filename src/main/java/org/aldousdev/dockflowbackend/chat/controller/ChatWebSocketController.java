@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.chat.dto.ChatMessageDTO;
 import org.aldousdev.dockflowbackend.chat.dto.request.SendMessageRequest;
+import org.aldousdev.dockflowbackend.chat.service.AiChatService;
 import org.aldousdev.dockflowbackend.chat.service.ChatService;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 @Slf4j
 public class ChatWebSocketController {
     private final ChatService chatService;
+    private final AiChatService aiChatService;
     private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
 
     /**
@@ -65,7 +67,15 @@ public class ChatWebSocketController {
                     request.getSenderId(), user.getId());
         }
 
-        return chatService.saveMessage(channelId, request.getContent(), user);
+        ChatMessageDTO result = chatService.saveMessage(channelId, request.getContent(), user);
+
+        try {
+            aiChatService.processMessage(channelId, request.getContent(), user);
+        } catch (Exception e) {
+            log.error("Failed to trigger AI chat processing", e);
+        }
+
+        return result;
     }
 
     /**
@@ -103,6 +113,14 @@ public class ChatWebSocketController {
                     .orElseThrow(() -> new RuntimeException("User not found in Principal and database: " + principal.getName()));
         }
 
-        return chatService.saveMessage(channelId, request.getContent(), user);
+        ChatMessageDTO result = chatService.saveMessage(channelId, request.getContent(), user);
+
+        try {
+            aiChatService.processMessage(channelId, request.getContent(), user);
+        } catch (Exception e) {
+            log.error("Failed to trigger AI chat processing", e);
+        }
+
+        return result;
     }
 }
