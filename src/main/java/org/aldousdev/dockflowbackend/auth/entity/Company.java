@@ -6,6 +6,8 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import org.aldousdev.dockflowbackend.document_edit.enums.EditorType;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -35,6 +37,10 @@ public class Company {
 
     @LastModifiedDate
     private LocalDateTime updatedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "preferred_editor", length = 20)
+    private EditorType preferredEditor;
 
     @OneToMany(mappedBy = "company", cascade = CascadeType.ALL,orphanRemoval = true)
     private List<Membership> memberships;

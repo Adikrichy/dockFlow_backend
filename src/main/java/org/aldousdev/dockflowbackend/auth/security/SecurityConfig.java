@@ -2,6 +2,7 @@ package org.aldousdev.dockflowbackend.auth.security;
 
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.document_edit.security.OnlyOfficeJwtFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -37,6 +38,22 @@ public class SecurityConfig {
 
     @Order(1)
     @Bean
+    public SecurityFilterChain wopiSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .securityMatcher("/api/wopi/**")  // WOPI endpoints for Collabora
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .anyRequest().permitAll())  // WOPI uses its own access_token for auth
+                .httpBasic(httpBasic -> httpBasic.disable());
+
+        return http.build();
+    }
+
+    @Order(2)
+    @Bean
     public SecurityFilterChain onlyOfficeSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/api/document-edit/file/**", "/api/document-edit/onlyoffice/callback/**")  // Только эти пути
@@ -52,7 +69,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Order(2)
+    @Order(3)
     @Bean
     public SecurityFilterChain internalApiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -83,6 +100,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/resend-verification-code").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/company/list").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/company/search").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         // Другие public пути
                         .requestMatchers(
@@ -102,15 +120,40 @@ public class SecurityConfig {
         return http.build();
     }
 
+    // Prevent JwtFilter from being auto-registered as a global servlet filter.
+    // It should only run within the security chains where it's explicitly added.
+    @Bean
+    public FilterRegistrationBean<JwtFilter> jwtFilterRegistration(JwtFilter filter) {
+        FilterRegistrationBean<JwtFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<RateLimitingFilter> rateLimitingFilterRegistration(RateLimitingFilter filter) {
+        FilterRegistrationBean<RateLimitingFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<OnlyOfficeJwtFilter> onlyOfficeJwtFilterRegistration(OnlyOfficeJwtFilter filter) {
+        FilterRegistrationBean<OnlyOfficeJwtFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOriginPatterns(List.of("http://localhost:5173",
                 "http://127.0.0.1:5173",
                 "http://localhost:8081",
-                "http://127.0.0.1:8081"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("authorization", "content-type", "x-auth-token","Authorization"));
+                "http://127.0.0.1:8081",
+                "http://localhost:9980",
+                "http://host.docker.internal:*"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(List.of("Authorization"));
 

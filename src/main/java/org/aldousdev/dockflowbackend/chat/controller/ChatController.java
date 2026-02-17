@@ -36,19 +36,21 @@ public class ChatController {
     }
 
     /**
-     * Получить список лс
+     * Получить список лс для конкретной компании
      */
-    @GetMapping("/dms")
-    public ResponseEntity<List<ChatChannelResponse>> getUserDMs() {
-        return ResponseEntity.ok(chatService.getUserDMs());
+    @GetMapping("/company/{companyId}/dms")
+    public ResponseEntity<List<ChatChannelResponse>> getUserDMs(@PathVariable Long companyId) {
+        return ResponseEntity.ok(chatService.getUserDMs(companyId));
     }
 
     /**
-     * Начать или получить лс с пользователем
+     * Начать или получить лс с пользователем внутри конкретной компании
      */
-    @PostMapping("/dm/{targetUserId}")
-    public ResponseEntity<ChatChannelResponse> startDM(@PathVariable Long targetUserId) {
-        return ResponseEntity.ok(chatService.getOrCreateDM(targetUserId));
+    @PostMapping("/company/{companyId}/dm/{targetUserId}")
+    public ResponseEntity<ChatChannelResponse> startDM(
+            @PathVariable Long companyId,
+            @PathVariable Long targetUserId) {
+        return ResponseEntity.ok(chatService.getOrCreateDM(companyId, targetUserId));
     }
 
     /**
@@ -70,6 +72,16 @@ public class ChatController {
     public ResponseEntity<Void> deleteMessage(
             @PathVariable Long messageId) {
         chatService.deleteMessage(messageId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Удалить канал (или ЛС) целиком
+     */
+    @DeleteMapping("/channel/{channelId}")
+    public ResponseEntity<Void> deleteChannel(
+            @PathVariable Long channelId) {
+        chatService.deleteChannel(channelId);
         return ResponseEntity.noContent().build();
     }
 

@@ -43,11 +43,22 @@ public class WorkflowEngine {
     private final EmailNotificationService emailNotificationService;
 
     /**
-     * Initializes workflow - creates tasks ONLY for the first step
+     * Initializes workflow - creates tasks ONLY for the first step (backward compatible)
      */
     @Transactional
     public void initializeWorkflow(WorkflowInstance workflowInstance, String workflowXml) {
-        log.info("Initializing workflow for document: {}", workflowInstance.getDocument().getId());
+        initializeWorkflow(workflowInstance, workflowXml, null);
+    }
+
+    /**
+     * Initializes workflow with optional direct user assignments
+     * @param stepAssignments Map of stepOrder -> userId for direct assignment (optional)
+     */
+    @Transactional
+    public void initializeWorkflow(WorkflowInstance workflowInstance, String workflowXml, 
+                                    java.util.Map<Integer, Long> stepAssignments) {
+        log.info("Initializing workflow for document: {} with assignments: {}", 
+            workflowInstance.getDocument().getId(), stepAssignments);
 
         try {
             List<WorkflowXmlParser.WorkflowStep> steps = WorkflowXmlParser.parseWorkflowSteps(workflowXml);
@@ -70,14 +81,31 @@ public class WorkflowEngine {
             boolean hasParallelSteps = firstStepGroup.stream()
                     .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
 
-            if (hasParallelSteps) {
+            // Check if we have a direct assignment for this step
+            Long assignedUserId = (stepAssignments != null) ? stepAssignments.get(firstStepOrder) : null;
+
+            if (assignedUserId != null) {
+                // Direct assignment mode: create task for the specific user
+                log.info("Direct assignment mode: assigning step {} to user {}", firstStepOrder, assignedUserId);
+                User assignedUser = userRepository.findById(assignedUserId)
+                        .orElseThrow(() -> new RuntimeException("Assigned user not found: " + assignedUserId));
+                
+                for (WorkflowXmlParser.WorkflowStep step : firstStepGroup) {
+                    createDirectlyAssignedTask(workflowInstance, firstStepOrder, step, assignedUser);
+                }
+            } else if (hasParallelSteps) {
                 // Create parallel tasks for all users with corresponding roles
                 createParallelTasks(workflowInstance, firstStepOrder, firstStepGroup);
             } else {
-                // Normal sequential execution
+                // Normal sequential execution - broadcast to role
                 for (WorkflowXmlParser.WorkflowStep step : firstStepGroup) {
                     createTask(workflowInstance, firstStepOrder, step);
                 }
+            }
+
+            // Store step assignments in workflow instance for later steps
+            if (stepAssignments != null && !stepAssignments.isEmpty()) {
+                workflowInstance.setStepAssignmentsJson(convertMapToJson(stepAssignments));
             }
 
             workflowInstance.setStatus(WorkFlowStatus.IN_PROGRESS);
@@ -88,6 +116,59 @@ public class WorkflowEngine {
             log.error("Error initializing workflow", e);
             workflowInstance.setStatus(WorkFlowStatus.REJECTED);
             throw new RuntimeException("Failed to initialize workflow: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Creates a task directly assigned to a specific user (no Claim needed)
+     */
+    private void createDirectlyAssignedTask(WorkflowInstance instance, Integer stepOrder,
+                                             WorkflowXmlParser.WorkflowStep step, User assignedUser) {
+        log.debug("Creating directly assigned task for step {} - user {}", stepOrder, assignedUser.getEmail());
+
+        java.util.Set<ActionType> actions = new java.util.HashSet<>();
+        actions.add(ActionType.APPROVE);
+        actions.add(ActionType.REJECT);
+        
+        if (step.getAllowedActions() != null) {
+            for (String actionStr : step.getAllowedActions()) {
+                try {
+                    actions.add(ActionType.valueOf(actionStr.toUpperCase()));
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid action type in XML: {}", actionStr);
+                }
+            }
+        }
+
+        Task task = Task.builder()
+                .workflowInstance(instance)
+                .stepOrder(stepOrder)
+                .requiredRoleName(step.getRoleName())
+                .requiredRoleLevel(step.getRoleLevel())
+                .assignedBy(instance.getInitiatedBy())
+                .assignedTo(assignedUser)  // Directly assigned!
+                .status(TaskStatus.IN_PROGRESS)  // Ready for action, no Claim needed
+                .availableActions(actions)
+                .build();
+        
+        taskRepository.save(task);
+        log.info("Created directly assigned task {} for step {} assigned to {}", 
+            task.getId(), stepOrder, assignedUser.getEmail());
+        
+        // Notify the assigned user
+        eventBroadcaster.broadcastTaskAssigned(
+            instance.getDocument().getCompany().getId(),
+            task.getId(),
+            assignedUser.getId()
+        );
+    }
+
+    private String convertMapToJson(java.util.Map<Integer, Long> map) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
+        } catch (Exception e) {
+            log.warn("Failed to serialize step assignments", e);
+            return null;
         }
     }
 
@@ -757,17 +838,43 @@ public class WorkflowEngine {
                 return;
             }
 
-            // Check if there are parallel steps
-            boolean hasParallelSteps = stepsForOrder.stream()
-                    .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
+            // Parse step assignments from JSON if available
+            java.util.Map<Integer, Long> stepAssignments = null;
+            if (instance.getStepAssignmentsJson() != null && !instance.getStepAssignmentsJson().isEmpty()) {
+                try {
+                    stepAssignments = new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(instance.getStepAssignmentsJson(), 
+                                    new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<Integer, Long>>() {});
+                } catch (Exception e) {
+                    log.warn("Failed to parse step assignments JSON: {}", e.getMessage());
+                }
+            }
 
-            if (hasParallelSteps) {
-                // Create parallel tasks
-                createParallelTasks(instance, stepOrder, stepsForOrder);
-            } else {
-                // Create normal tasks (for compatibility)
+            // Check if we have a direct assignment for this step
+            Long assignedUserId = (stepAssignments != null) ? stepAssignments.get(stepOrder) : null;
+
+            if (assignedUserId != null) {
+                // Direct assignment mode: create task for the specific user
+                log.info("Direct assignment mode for step {}: assigning to user {}", stepOrder, assignedUserId);
+                User assignedUser = userRepository.findById(assignedUserId)
+                        .orElseThrow(() -> new RuntimeException("Assigned user not found: " + assignedUserId));
+                
                 for (WorkflowXmlParser.WorkflowStep step : stepsForOrder) {
-                    createTask(instance, stepOrder, step);
+                    createDirectlyAssignedTask(instance, stepOrder, step, assignedUser);
+                }
+            } else {
+                // Check if there are parallel steps
+                boolean hasParallelSteps = stepsForOrder.stream()
+                        .anyMatch(WorkflowXmlParser.WorkflowStep::isParallel);
+
+                if (hasParallelSteps) {
+                    // Create parallel tasks
+                    createParallelTasks(instance, stepOrder, stepsForOrder);
+                } else {
+                    // Create normal tasks (for compatibility)
+                    for (WorkflowXmlParser.WorkflowStep step : stepsForOrder) {
+                        createTask(instance, stepOrder, step);
+                    }
                 }
             }
 

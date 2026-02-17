@@ -32,6 +32,7 @@ public class WorkflowInstance {
     private WorkflowTemplate template;
 
     @Enumerated(EnumType.STRING)
+    @Builder.Default
     private WorkFlowStatus status = WorkFlowStatus.IN_PROGRESS;
 
     @CreatedDate
@@ -51,5 +52,7 @@ public class WorkflowInstance {
     )
     private List<Task> tasks;
 
+    @Column(name = "step_assignments_json", columnDefinition = "TEXT")
+    private String stepAssignmentsJson;
 
 }

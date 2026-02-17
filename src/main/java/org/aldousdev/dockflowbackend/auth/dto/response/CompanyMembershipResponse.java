@@ -13,4 +13,6 @@ public class CompanyMembershipResponse {
     private String description;
     private String roleName;
     private Integer roleLevel;
+    @com.fasterxml.jackson.annotation.JsonProperty("preferredEditor")
+    private org.aldousdev.dockflowbackend.document_edit.enums.EditorType preferredEditor;
 }

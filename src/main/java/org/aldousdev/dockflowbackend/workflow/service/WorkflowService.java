@@ -147,11 +147,7 @@ public class WorkflowService {
      */
     public List<WorkflowTemplateResponse> getCompanyTemplates(Long companyId, User currentUser) {
         log.debug("Fetching templates for company: {}", companyId);
-        Integer userRoleLevel = currentUser.getMemberships().stream()
-                .filter(m->companyId.equals(m.getCompany().getId()))
-                .map(m->m.getRole().getLevel())
-                .findFirst()
-                .orElse(null);
+        Integer userRoleLevel = currentUser.getRoleLevelInCompany(companyId);
 
         if (userRoleLevel == null) {
             log.warn("User {} tried to access templates of company {} without membership", currentUser.getEmail(), companyId);
@@ -201,11 +197,21 @@ public class WorkflowService {
     }
 
     /**
-     * Starts a workflow for a document
+     * Starts a workflow for a document (backward compatible - no assignments)
      */
     @Transactional
     public WorkflowInstanceResponse startWorkflow(Long documentId, Long templateId, User initiatedBy) {
-        log.info("Starting workflow for document: {} using template: {}", documentId, templateId);
+        return startWorkflow(documentId, templateId, initiatedBy, null);
+    }
+
+    /**
+     * Starts a workflow for a document with optional direct user assignments
+     */
+    @Transactional
+    public WorkflowInstanceResponse startWorkflow(Long documentId, Long templateId, User initiatedBy, 
+                                                   java.util.Map<Integer, Long> stepAssignments) {
+        log.info("Starting workflow for document: {} using template: {} with assignments: {}", 
+            documentId, templateId, stepAssignments);
 
         Document document = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
@@ -227,8 +233,8 @@ public class WorkflowService {
 
         instance = instanceRepository.save(instance);
 
-        // Initialize workflow - create tasks according to XML
-        workflowEngine.initializeWorkflow(instance, template.getStepsXml());
+        // Initialize workflow - create tasks according to XML with optional assignments
+        workflowEngine.initializeWorkflow(instance, template.getStepsXml(), stepAssignments);
         
         instance = instanceRepository.save(instance);
         log.info("Workflow instance created: {} with status: {}", instance.getId(), instance.getStatus());
@@ -282,11 +288,8 @@ public class WorkflowService {
         log.debug("Fetching pending tasks for user: {} in company: {}", user.getEmail(), companyId);
 
         // Get the user's role level specifically in this company
-        Integer userLevel = user.getMemberships().stream()
-                .filter(m -> companyId.equals(m.getCompany().getId()))
-                .map(m -> m.getRole().getLevel())
-                .findFirst()
-                .orElse(0);
+        Integer level = user.getRoleLevelInCompany(companyId);
+        final Integer userLevel = level != null ? level : 0;
 
         // Get all PENDING, IN_PROGRESS and CHANGES_REQUESTED tasks for the company
         List<Task> potentialTasks = taskRepository.findPendingTasksByCompanyId(companyId, TaskStatus.PENDING);
@@ -720,9 +723,50 @@ public class WorkflowService {
         templateRepository.save(template);
     }
 
-    private boolean hasHighEnoughRole(User user, Long id, int requiredLevel){
-        return user.getMemberships().stream()
-                .filter(m->id.equals(m.getCompany().getId()))
-                .anyMatch(m->m.getRole().getLevel() >= requiredLevel);
+    private boolean hasHighEnoughRole(User user, Long companyId, int requiredLevel){
+        Integer level = user.getRoleLevelInCompany(companyId);
+        return level != null && level >= requiredLevel;
+    }
+
+    /**
+     * Retrieves all steps of a template along with potential users who can perform each step.
+     */
+    public List<org.aldousdev.dockflowbackend.workflow.dto.StepWithUsersResponse> getStepsWithPotentialUsers(Long templateId) {
+        WorkflowTemplate template = templateRepository.findById(templateId)
+                .orElseThrow(() -> new ResourceNotFoundException("Template not found: " + templateId));
+
+        try {
+            List<WorkflowXmlParser.WorkflowStep> steps = WorkflowXmlParser.parseWorkflowSteps(template.getStepsXml());
+            Long companyId = template.getCompanyId();
+
+            return steps.stream().map(step -> {
+                // Find users in company with matching role level
+                List<User> potentialUsers = membershipRepository.findAll().stream()
+                        .filter(m -> m.getCompany().getId().equals(companyId))
+                        .filter(m -> m.getRole().getLevel() >= step.getRoleLevel()) // Or exact? usually roleLevel is MIN level.
+                        .map(Membership::getUser)
+                        .distinct()
+                        .collect(Collectors.toList());
+
+                return org.aldousdev.dockflowbackend.workflow.dto.StepWithUsersResponse.builder()
+                        .order(step.getOrder())
+                        .roleName(step.getRoleName())
+                        .roleLevel(step.getRoleLevel())
+                        .description(step.getDescription())
+                        .parallel(step.isParallel())
+                        .potentialUsers(potentialUsers.stream()
+                                .map(u -> org.aldousdev.dockflowbackend.workflow.dto.StepWithUsersResponse.UserSummaryDto.builder()
+                                        .id(u.getId())
+                                        .email(u.getEmail())
+                                        .name(u.getFirstName() + " " + u.getLastName())
+                                        .build())
+                                .collect(Collectors.toList()))
+                        .build();
+            }).collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("Error parsing workflow steps for template {}: {}", templateId, e.getMessage());
+            throw new RuntimeException("Failed to analyze template steps: " + e.getMessage());
+        }
     }
 }

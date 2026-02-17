@@ -13,7 +13,7 @@ public interface DocumentEditSessionRepository extends JpaRepository<DocumentEdi
 
     Optional<DocumentEditSession> findBySessionKey(String sessionKey);
 
-    Optional<DocumentEditSession> findByOnlyofficeKey(String onlyofficeKey);
+    Optional<DocumentEditSession> findByOnlyOfficeKey(String onlyOfficeKey);
 
     List<DocumentEditSession> findByDocumentIdAndStatus(
             @Param("documentId") Long documentId,

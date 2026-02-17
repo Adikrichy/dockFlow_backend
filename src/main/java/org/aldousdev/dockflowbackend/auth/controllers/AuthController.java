@@ -115,7 +115,11 @@ public class AuthController {
                         .description(m.getCompany().getDescription())
                         .roleName(m.getRole().getName())
                         .roleLevel(m.getRole().getLevel())
+                        .preferredEditor(m.getCompany().getPreferredEditor() != null 
+                            ? m.getCompany().getPreferredEditor() 
+                            : org.aldousdev.dockflowbackend.document_edit.enums.EditorType.ONLYOFFICE)
                         .build())
+                .peek(m -> System.out.println("Mapped CompanyMembershipResponse for " + m.getCompanyName() + ": preferredEditor=" + m.getPreferredEditor()))
                 .toList()
                 : java.util.Collections.emptyList();
 

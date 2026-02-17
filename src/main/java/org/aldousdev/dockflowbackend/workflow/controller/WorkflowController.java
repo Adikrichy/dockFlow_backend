@@ -46,6 +46,8 @@ public class WorkflowController {
     private final BulkWorkflowService bulkWorkflowService;
     private final UserService userService;
     private final JWTService jwtService;
+    private final org.aldousdev.dockflowbackend.ai.producer.AiTaskProducer aiTaskProducer;
+    private final org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository companyRoleRepository;
 
     /**
      * POST /api/workflow/template - создать новый workflow template
@@ -124,12 +126,13 @@ public class WorkflowController {
 
     /**
      * POST /api/workflow/{templateId}/start - запустить workflow для документа
-     * Body: { "documentId": 123 }
+     * Body: { "documentId": 123, "stepAssignments": { 1: 456, 2: 789 } }
      */
     @PostMapping("/{templateId}/start")
     @CanStartWorkflow
     @Operation(summary = "Запустить workflow для документа", 
             description = "Инициирует новый workflow процесс для документа, используя указанный шаблон. " +
+                    "Опционально можно указать stepAssignments для прямого назначения пользователей на шаги. " +
                     "Требуется разрешение на запуск этого workflow template.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Workflow успешно запущен",
@@ -141,14 +144,15 @@ public class WorkflowController {
     public ResponseEntity<WorkflowInstanceResponse> startWorkflow(
             @Parameter(description = "ID workflow шаблона", required = true)
             @PathVariable Long templateId,
-            @Parameter(description = "ID документа", required = true)
-            @RequestParam Long documentId,
+            @RequestBody org.aldousdev.dockflowbackend.workflow.dto.StartWorkflowRequest request,
             Authentication authentication) {
         
-        log.info("Starting workflow {} for document {}", templateId, documentId);
+        log.info("Starting workflow {} for document {} with assignments: {}", 
+            templateId, request.getDocumentId(), request.getStepAssignments());
         User user = userService.getUserByEmail(authentication.getName());
         
-        WorkflowInstanceResponse instance = workflowService.startWorkflow(documentId, templateId, user);
+        WorkflowInstanceResponse instance = workflowService.startWorkflow(
+            request.getDocumentId(), templateId, user, request.getStepAssignments());
         return ResponseEntity.status(HttpStatus.CREATED).body(instance);
     }
 
@@ -540,5 +544,51 @@ public class WorkflowController {
 
         workflowService.deleteTemplate(templateId, user);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * POST /api/workflow/ai-suggest - сгенерировать workflow с помощью ИИ
+     */
+    @PostMapping("/ai-suggest")
+    @RequiresRoleLevel(60)
+    @Operation(summary = "Сгенерировать workflow с помощью ИИ",
+            description = "Принимает текстовое описание процесса и отправляет его в AI Service для генерации XML.")
+    public ResponseEntity<Void> suggestWorkflowAi(
+            @RequestBody org.aldousdev.dockflowbackend.workflow.dto.request.AiWorkflowSuggestRequest request,
+            @RequestParam Long companyId,
+            Authentication authentication) {
+        
+        User user = userService.getUserByEmail(authentication.getName());
+        // Use the companyId passed from frontend
+        
+        // Fetch available roles for the company
+        java.util.List<java.util.Map<String, Object>> rolesPayload = companyRoleRepository.findByCompanyId(companyId)
+                .stream()
+                .map(r -> {
+                    java.util.Map<String, Object> map = new java.util.HashMap<>();
+                    map.put("name", r.getName());
+                    map.put("level", r.getLevel());
+                    return map;
+                })
+                .collect(java.util.stream.Collectors.toList());
+
+        log.info("Requesting AI workflow suggestion for company {} by user {}. Available roles: {}", 
+                companyId, user.getEmail(), rolesPayload.stream().map(m -> m.get("name")).collect(java.util.stream.Collectors.toList()));
+        
+        aiTaskProducer.sendWorkflowSuggest(request.getPrompt(), request.getCurrentXml(), companyId, user.getId(), user.getFirstName(), rolesPayload);
+        
+        return ResponseEntity.accepted().build();
+    }
+
+    /**
+     * GET /api/workflow/template/{templateId}/steps-with-users - получить шаги шаблона с потенциальными исполнителями
+     */
+    @GetMapping("/template/{templateId}/steps-with-users")
+    @Operation(summary = "Получить шаги шаблона с потенциальными исполнителями",
+            description = "Возвращает список шагов workflow шаблона и список пользователей, которые могут выполнить каждый шаг.")
+    public ResponseEntity<List<org.aldousdev.dockflowbackend.workflow.dto.StepWithUsersResponse>> getStepsWithUsers(
+            @PathVariable Long templateId) {
+        log.info("Fetching steps with users for template: {}", templateId);
+        return ResponseEntity.ok(workflowService.getStepsWithPotentialUsers(templateId));
     }
 }

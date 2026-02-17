@@ -10,4 +10,6 @@ public class CompanyRequest {
     private String description;
     private boolean useDefaultRoles;
     private String keyPassword; // Password to encrypt the PKCS#12 key file
+    @com.fasterxml.jackson.annotation.JsonProperty("preferredEditor")
+    private org.aldousdev.dockflowbackend.document_edit.enums.EditorType preferredEditor;
 }

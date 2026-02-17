@@ -21,6 +21,8 @@ import org.aldousdev.dockflowbackend.workflow.entity.Document;
 import org.aldousdev.dockflowbackend.workflow.entity.DocumentVersion;
 import org.aldousdev.dockflowbackend.workflow.repository.DocumentRepository;
 import org.aldousdev.dockflowbackend.workflow.service.DocumentVersioningService;
+import org.aldousdev.dockflowbackend.document_edit.enums.EditorType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,20 +50,17 @@ public class DocumentEditService {
     private final OnlyOfficeClient onlyOfficeClient;
     private final AiFacade aiFacade;
 
+    private final Map<EditorType, EditorProvider> editorProviders = new HashMap<>();
+
+    @Autowired
+    public void setEditorProviders(List<EditorProvider> providers) {
+        for (EditorProvider provider : providers) {
+            editorProviders.put(provider.getSupportedType(), provider);
+        }
+    }
+
     @Value("${file.upload.dir:./uploads}")
     private String uploadDir;
-
-    @Value("${app.public.url:http://localhost:8080}")
-    private String publicBaseUrl;
-
-    @Value("${onlyoffice.jwt.secret}")
-    private String jwtSecret;
-
-    @Value("${onlyoffice.docs.url:http://localhost:8081}")
-    private String onlyOfficeDocsUrl;
-
-    @Value("${app.internal.url:http://host.docker.internal:8080}")
-    private String internalBaseUrl;
 
     private final ObjectMapper objectMapper;
     private final jakarta.persistence.EntityManager entityManager;
@@ -102,11 +101,23 @@ public class DocumentEditService {
                 documentId, baseVersionToUse, user.getId(), EditSessionStatus.ACTIVE);
         
         if (!existingSessions.isEmpty()) {
-            // Reuse existing session for THIS user only
+            // Reuse existing session for THIS user only IF it matches company's current preferred editor
             DocumentEditSession existingSession = existingSessions.get(0);
-            log.info("Found active session {} for document {} V{} by user {}. Reusing.", 
-                    existingSession.getSessionKey(), documentId, baseVersionToUse, user.getEmail());
-            return StartEditSessionResponse.builder().sessionKey(existingSession.getSessionKey()).build();
+            EditorType preferredType = document.getCompany().getPreferredEditor() != null 
+                    ? document.getCompany().getPreferredEditor() : EditorType.ONLYOFFICE;
+
+            if (existingSession.getEditorType() == preferredType) {
+                log.info("Found active session {} for document {} V{} by user {} with correct editor {}. Reusing.", 
+                        existingSession.getSessionKey(), documentId, baseVersionToUse, user.getEmail(), preferredType);
+                return StartEditSessionResponse.builder().sessionKey(existingSession.getSessionKey()).build();
+            } else {
+                log.info("Found active session {} for document {} V{} by user {}, but editor type {} mismatch with preferred {}. Discarding old session.", 
+                        existingSession.getSessionKey(), documentId, baseVersionToUse, user.getEmail(), 
+                        existingSession.getEditorType(), preferredType);
+                existingSession.setStatus(EditSessionStatus.DISCARDED);
+                sessionRepository.save(existingSession);
+                // Continue to create a new session
+            }
         }
 
         String sessionKey = UUID.randomUUID().toString().replace("-", "");
@@ -136,7 +147,9 @@ public class DocumentEditService {
                     .document(document)
                     .createdBy(user)
                     .sessionKey(sessionKey)
-                    .onlyofficeKey(onlyofficeKey)
+                    .editorType(document.getCompany().getPreferredEditor() != null 
+                            ? document.getCompany().getPreferredEditor() : EditorType.ONLYOFFICE)
+                    .onlyOfficeKey(onlyofficeKey)
                     .workingDocxPath(workingPath.toString())
                     .status(EditSessionStatus.ACTIVE)
                     .baseVersionNumber(baseVersionToUse)
@@ -154,7 +167,7 @@ public class DocumentEditService {
         }
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public EditorConfigResponse getEditorConfig(String sessionKey) {
         User user = authService.getCurrentUser();
         log.info("Getting editor config for session: {} by user: {}", sessionKey, user.getEmail());
@@ -166,76 +179,28 @@ public class DocumentEditService {
             throw new IllegalStateException("Edit session is not active");
         }
 
-        String fileUrl = internalBaseUrl + "/api/document-edit/file/" + sessionKey;
-        String callbackUrl = internalBaseUrl + "/api/document-edit/onlyoffice/callback/" + sessionKey;
+        EditorProvider provider = editorProviders.get(session.getEditorType());
+        if (provider == null) {
+            throw new IllegalStateException("No provider found for editor type: " + session.getEditorType());
+        }
 
-        // Создаем конфиг для генерации токена
-        Map<String, Object> doc = new HashMap<>();
-        doc.put("fileType", "docx");
-        doc.put("key", session.getOnlyofficeKey());
-        doc.put("title", session.getDocument().getOriginalFilename());
-        doc.put("url", fileUrl);
-
-        Map<String,Object> fileAccessClaims = new HashMap<>();
-        fileAccessClaims.put("sessionKey", sessionKey);
-        String fileToken = generateToken(fileAccessClaims);
-        doc.put("token", fileToken);
-
-        Map<String, Object> userMap = new HashMap<>();
-        userMap.put("id", String.valueOf(user.getId()));
-        userMap.put("name", user.getFirstName() + " " + user.getLastName());
-
-        Map<String, Object> editorConfig = new HashMap<>();
-        editorConfig.put("mode", "edit");
-        
-        // Fast co-editing mode ensures changes are synced to the Document Server immediately
-        // This is required for 'forcesave' command to work correctly.
-        Map<String, Object> coEditing = new HashMap<>();
-        coEditing.put("mode", "fast");
-        editorConfig.put("coEditing", coEditing);
-
-        editorConfig.put("callbackUrl", callbackUrl);
-        editorConfig.put("user", userMap);
-
-        Map<String, Object> customization = new HashMap<>();
-        customization.put("forcesave", true);
-        editorConfig.put("customization", customization);
-
-        Map<String, Object> config = new HashMap<>();
-        config.put("documentType", "word");
-        config.put("document", doc);
-        config.put("editorConfig", editorConfig);
-
-        // Генерируем токен для конфигурации
-        String configToken = generateToken(config);
-        config.put("token", configToken);
-
-        // Добавляем documentServerUrl ПОСЛЕ генерации токена
-        config.put("documentServerUrl", onlyOfficeDocsUrl);
-
-        log.info("Returning editor config for session {}", sessionKey);
-        log.info("Generated editor config for session {}: {}", sessionKey, config);
-
-//        Map<String, Object> config = generateEditorConfig(session, user);
-//        log.info("Returning editor config for session {}", sessionKey);
-//        log.debug("Generated editor config: {}", config);
-        return EditorConfigResponse.builder().config(config).build();
+        return provider.generateConfig(session, user);
     }
 
     @Transactional
-    public void applyOnlyOfficeSave(String onlyofficeKey, Integer status, String downloadUrl) {
-        DocumentEditSession session = sessionRepository.findByOnlyofficeKey(onlyofficeKey)
+    public void applyOnlyOfficeSave(String onlyOfficeKey, Integer status, String downloadUrl) {
+        DocumentEditSession session = sessionRepository.findByOnlyOfficeKey(onlyOfficeKey)
                 .orElseThrow(() -> new ResourceNotFoundException("Session not found for key"));
 
         if (session.getStatus() != EditSessionStatus.ACTIVE) {
-            log.warn("Received callback for non-active session {} (status: {}). Ignoring.", onlyofficeKey, session.getStatus());
+            log.warn("Received callback for non-active session {} (status: {}). Ignoring.", onlyOfficeKey, session.getStatus());
             return;
         }
 
         // OnlyOffice callback status:
         // 2 - document is ready for saving, 6/7 - force save variants (depends on config/version).
         // We save only when URL is present and status indicates save.
-        log.info("Received OnlyOffice callback for key {}. Status: {}. URL: {}", onlyofficeKey, status, downloadUrl);
+        log.info("Received OnlyOffice callback for key {}. Status: {}. URL: {}", onlyOfficeKey, status, downloadUrl);
         if (status == null || !(status == 2 || status == 6 || status == 7)) {
             return;
         }
@@ -246,7 +211,7 @@ public class DocumentEditService {
         if (bytes.length < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B) { // 'P' 'K'
             String contentPreview = new String(bytes, 0, Math.min(bytes.length, 200), StandardCharsets.UTF_8);
             log.error("Downloaded file from OnlyOffice is NOT a valid DOCX/ZIP for session {}. URL: {}. Content preview: {}", 
-                    onlyofficeKey, downloadUrl, contentPreview);
+                    onlyOfficeKey, downloadUrl, contentPreview);
             throw new RuntimeException("Downloaded file is corrupted or not a DOCX. See logs for content preview.");
         }
 
@@ -254,9 +219,9 @@ public class DocumentEditService {
             Files.write(Paths.get(session.getWorkingDocxPath()), bytes);
             session.setUpdatedAt(LocalDateTime.now());
             sessionRepository.save(session);
-            log.info("Successfully updated working file for session {} from OnlyOffice callback", onlyofficeKey);
+            log.info("Successfully updated working file for session {} from OnlyOffice callback", onlyOfficeKey);
         } catch (Exception e) {
-            log.error("Failed to write edited file for session {}: {}", onlyofficeKey, e.getMessage(), e);
+            log.error("Failed to write edited file for session {}: {}", onlyOfficeKey, e.getMessage(), e);
             throw new RuntimeException("Failed to save edited file: " + e.getMessage(), e);
         }
     }
@@ -292,7 +257,7 @@ public class DocumentEditService {
         log.info("Triggering FORCE SAVE for session {}", sessionKey);
         LocalDateTime beforeSave = session.getUpdatedAt();
         
-        int forceSaveResult = onlyOfficeClient.executeCommand("forcesave", session.getOnlyofficeKey());
+        int forceSaveResult = onlyOfficeClient.executeCommand("forcesave", session.getOnlyOfficeKey());
 
         boolean saved = false;
         if (forceSaveResult == 4) {
@@ -385,26 +350,6 @@ public class DocumentEditService {
 
     // В DocumentEditService.java замените метод generateToken:
 
-    private String generateToken(Map<String, Object> payload) {
-        try {
-            SecretKey secretKey = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-
-            // НЕ оборачивайте в "payload"! Добавляйте поля напрямую
-            JwtBuilder builder = Jwts.builder();
-
-            for (Map.Entry<String, Object> entry : payload.entrySet()) {
-                builder.claim(entry.getKey(), entry.getValue());
-            }
-
-            // Set expiration to 24 hours to avoid "UpdateVersion expired" for long sessions
-            builder.expiration(new java.util.Date(System.currentTimeMillis() + 86400000)); // 24 hours
-
-            return builder.signWith(secretKey).compact();
-        } catch (Exception e) {
-            log.error("Failed to generate token: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to generate token", e);
-        }
-    }
 
 //    private Map<String,Object> generateEditorConfig(DocumentEditSession session, User user) {
 //        Map<String,Object> config = new HashMap<>();

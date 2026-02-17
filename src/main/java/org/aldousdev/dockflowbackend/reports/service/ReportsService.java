@@ -54,6 +54,9 @@ public class ReportsService {
     }
     
     public boolean hasReportAccess(Long userId, Long companyId) {
+        User user = userRepository.findById(userId).orElse(null);
+        if (user != null && user.isAiAssistant()) return true;
+        
         return membershipRepository.findByCompanyIdAndUserId(companyId, userId)
                 .map(membership -> {
                      if (membership.getRole() != null) {

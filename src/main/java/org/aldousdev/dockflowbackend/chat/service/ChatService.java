@@ -72,6 +72,13 @@ public class ChatService {
         
         ChatChannel channel = chatChannelRepository.findById(channelId)
                 .orElseThrow(() -> new RuntimeException("Channel not found"));
+
+        // Security check: ensure user is member of the company the channel belongs to
+        // This method handles the bypass for AI Assistant automatically
+        if (!currentUser.isMemberOf(channel.getCompany().getId())) {
+            log.error("Access denied: User {} is not a member of company {}", currentUser.getId(), channel.getCompany().getId());
+            throw new RuntimeException("Access denied to this channel");
+        }
         
         Message message = Message.builder()
                 .content(content)
@@ -88,8 +95,9 @@ public class ChatService {
                 .content(message.getContent())
                 .senderId(currentUser.getId())
                 .senderName(currentUser.getFirstName() + " " + currentUser.getLastName())
+                .senderEmail(currentUser.getEmail())
                 .channelId(channelId)
-                .timestamp(message.getCreatedAt())
+                .timestamp(message.getCreatedAt() != null ? message.getCreatedAt() : java.time.LocalDateTime.now())
                 .type("CHAT")
                 .build();
     }
@@ -128,6 +136,15 @@ public class ChatService {
     }
 
     /**
+     * Delete entire channel
+     */
+    @Transactional
+    public void deleteChannel(Long channelId) {
+        log.info("Deleting channel: {}", channelId);
+        chatChannelRepository.deleteById(channelId);
+    }
+
+    /**
      * Edit message
      */
     @Transactional
@@ -147,25 +164,28 @@ public class ChatService {
     private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
 
     /**
-     * Get or create DM with user
+     * Get or create DM with user within a specific company
      */
     @Transactional
-    public ChatChannelResponse getOrCreateDM(Long targetUserId) {
+    public ChatChannelResponse getOrCreateDM(Long companyId, Long targetUserId) {
         User currentUser = authService.getCurrentUser();
+        var company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new CompanyNotFoundException("Company not found"));
+
         User targetUser = userRepository.findById(targetUserId)
                 .orElseThrow(() -> new RuntimeException("Target user not found"));
 
-        // Check if DM exists
-        return chatChannelRepository.findDMChannel(currentUser, targetUser)
+        // Check if DM exists within THIS company
+        return chatChannelRepository.findDMChannel(currentUser, targetUser, company)
                 .map(channel -> channelToResponse(channel, currentUser))
                 .orElseGet(() -> {
-                    // Create new DM
+                    // Create new DM pinned to this company
                     ChatChannel dm = ChatChannel.builder()
-                            .name("DM") // Name doesn't matter much for DMs
+                            .name("DM")
                             .type(ChatChannel.ChannelType.DM)
                             .members(List.of(currentUser, targetUser))
                             .isPublic(false)
-                            .company(currentUser.getMemberships().get(0).getCompany()) // Bind to current context company roughly
+                            .company(company)
                             .build();
 
                     dm = chatChannelRepository.save(dm);
@@ -174,11 +194,14 @@ public class ChatService {
     }
 
     /**
-     * Get user's DM list
+     * Get user's DM list for a specific company
      */
-    public List<ChatChannelResponse> getUserDMs() {
+    public List<ChatChannelResponse> getUserDMs(Long companyId) {
         User currentUser = authService.getCurrentUser();
-        return chatChannelRepository.findUserDMs(currentUser).stream()
+        var company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new CompanyNotFoundException("Company not found"));
+                
+        return chatChannelRepository.findUserDMs(currentUser, company).stream()
                 .map(channel -> channelToResponse(channel, currentUser))
                 .toList();
     }

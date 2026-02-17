@@ -65,4 +65,9 @@ public class DocumentAiAnalysisController {
         ChatMessageDTO response = aiAnalysisService.sendDocumentChatMessage(documentId, versionId, content);
         return ResponseEntity.ok(response);
     }
+
+    @GetMapping("/{documentId}/chat")
+    public ResponseEntity<java.util.List<ChatMessageDTO>> getChatHistory(@PathVariable Long documentId) {
+        return ResponseEntity.ok(aiAnalysisService.getDocumentChatHistory(documentId));
+    }
 }

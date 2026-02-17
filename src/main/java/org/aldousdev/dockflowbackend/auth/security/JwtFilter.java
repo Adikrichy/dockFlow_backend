@@ -44,7 +44,8 @@ public class JwtFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
         return path.startsWith("/api/document-edit/file/") ||
                 path.startsWith("/api/document-edit/onlyoffice/callback/") ||
-                path.startsWith("/api/internal/");
+                path.startsWith("/api/internal/") ||
+                path.startsWith("/api/wopi/");
     }
 
     @Override

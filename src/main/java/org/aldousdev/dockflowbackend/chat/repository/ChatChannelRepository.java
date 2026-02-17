@@ -16,10 +16,12 @@ public interface ChatChannelRepository extends JpaRepository<ChatChannel, Long> 
     Optional<ChatChannel> findByIdAndCompany(Long id, Company company);
     Optional<ChatChannel> findByNameAndCompany(String name, Company company);
     List<ChatChannel> findByCompanyAndTypeAndIsPublicTrue(Company company, ChatChannel.ChannelType type);
-    
-    @Query("SELECT c FROM ChatChannel c JOIN c.members m1 JOIN c.members m2 WHERE c.type = 'DM' AND m1 = :user1 AND m2 = :user2")
-    Optional<ChatChannel> findDMChannel(@Param("user1") User user1, @Param("user2") User user2);
 
-    @Query("SELECT c FROM ChatChannel c JOIN c.members m WHERE c.type = 'DM' AND m = :user")
-    List<ChatChannel> findUserDMs(@Param("user") User user);
+    @Query("SELECT c FROM ChatChannel c JOIN c.members m1 JOIN c.members m2 " +
+           "WHERE c.type = 'DM' AND c.company = :company AND m1 = :user1 AND m2 = :user2")
+    Optional<ChatChannel> findDMChannel(@Param("user1") User user1, @Param("user2") User user2, @Param("company") Company company);
+
+    @Query("SELECT c FROM ChatChannel c JOIN c.members m " +
+           "WHERE c.type = 'DM' AND c.company = :company AND m = :user")
+    List<ChatChannel> findUserDMs(@Param("user") User user, @Param("company") Company company);
 }

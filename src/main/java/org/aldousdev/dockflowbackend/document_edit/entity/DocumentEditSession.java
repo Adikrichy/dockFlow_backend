@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.document_edit.enums.EditSessionStatus;
+import org.aldousdev.dockflowbackend.document_edit.enums.EditorType;
 import org.aldousdev.dockflowbackend.workflow.entity.Document;
 
 import java.time.LocalDateTime;
@@ -32,8 +33,22 @@ public class DocumentEditSession {
     @Column(name = "session_key", nullable = false, unique = true, length = 64)
     private String sessionKey;
 
-    @Column(name = "onlyoffice_key", nullable = false, unique = true, length = 128)
-    private String onlyofficeKey;
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "editor_type", nullable = false, length = 20)
+    private EditorType editorType = EditorType.ONLYOFFICE;
+
+    @Column(name = "onlyoffice_key", length = 128)
+    private String onlyOfficeKey;
+
+    @Column(name = "wopi_file_id", length = 128)
+    private String wopiFileId;
+
+    @Column(name = "wopi_lock_value", length = 255)
+    private String wopiLockValue;
+
+    @Column(name = "wopi_lock_expires_at")
+    private LocalDateTime wopiLockExpiresAt;
 
     @Column(name = "working_docx_path", nullable = false, length = 1000)
     private String workingDocxPath;

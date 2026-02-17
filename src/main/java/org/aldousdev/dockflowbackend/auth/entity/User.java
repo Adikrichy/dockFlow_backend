@@ -110,4 +110,25 @@ public class User implements UserDetails {
         return true;
     }
 
+    public boolean isAiAssistant() {
+        return "ai@dockflow.com".equalsIgnoreCase(email);
+    }
+
+    public boolean isMemberOf(Long companyId) {
+        if (isAiAssistant()) return true;
+        if (memberships == null) return false;
+        return memberships.stream()
+                .anyMatch(m -> m.getCompany().getId().equals(companyId));
+    }
+
+    public Integer getRoleLevelInCompany(Long companyId) {
+        if (isAiAssistant()) return 100;
+        if (memberships == null) return null;
+        return memberships.stream()
+                .filter(m -> m.getCompany().getId().equals(companyId))
+                .filter(m -> m.getRole() != null)
+                .map(m -> m.getRole().getLevel())
+                .findFirst()
+                .orElse(null);
+    }
 }

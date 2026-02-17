@@ -17,6 +17,7 @@ public class AiTaskProducer {
     private final ServiceJwtTokenService serviceJwtTokenService;
     private final org.aldousdev.dockflowbackend.chat.repository.ChatChannelRepository chatChannelRepository;
     private final org.aldousdev.dockflowbackend.chat.repository.MessageRepository messageRepository;
+    private final org.aldousdev.dockflowbackend.ai.service.CompanyAiSettingsService companyAiSettingsService;
     
     @Value("${app.ai.url:http://localhost:8080}")
     private String internalBaseUrl;
@@ -70,9 +71,9 @@ public class AiTaskProducer {
         aiTaskDto.getPayload().put("company_id", companyId);
         aiTaskDto.getPayload().put("priority", "normal");
         
-        if (provider != null) {
-            aiTaskDto.getPayload().put("provider", provider);
-        }
+        // Use provided provider or fallback to company-specific settings
+        String effectiveProvider = provider != null ? provider : companyAiSettingsService.getProviderForCompany(companyId);
+        aiTaskDto.getPayload().put("provider", effectiveProvider);
 
         log.info("Sending AI task [{}]: correlationId={}, routingKey={}, fileUrl={}", 
             aiTaskDto.getType(), aiTaskDto.getCorrelationId(), AiRabbitConfig.AI_TASK_QUEUE, internalFileUrl);
@@ -203,6 +204,28 @@ public class AiTaskProducer {
         log.info("Sending AI document review task: correlationId={}, topic={}", 
             aiTaskDto.getCorrelationId(), topic);
             
+        aiRabbitTemplate.convertAndSend(AiRabbitConfig.AI_TASK_QUEUE, aiTaskDto);
+    }
+
+    public void sendWorkflowSuggest(String prompt, String currentXml, Long companyId, Long userId, String userName, java.util.List<java.util.Map<String, Object>> availableRoles) {
+        AiTaskDto aiTaskDto = new AiTaskDto();
+        aiTaskDto.setType("WORKFLOW_SUGGEST");
+        aiTaskDto.setCorrelationId("wf-suggest-" + companyId + "-" + System.currentTimeMillis());
+        aiTaskDto.setCreatedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString());
+        aiTaskDto.setReplyTo(AiRabbitConfig.CORE_RESULTS_QUEUE);
+
+        aiTaskDto.getPayload().put("prompt", prompt);
+        aiTaskDto.getPayload().put("current_xml", currentXml);
+        aiTaskDto.getPayload().put("company_id", companyId);
+        aiTaskDto.getPayload().put("sender_id", userId);
+        aiTaskDto.getPayload().put("sender_name", userName);
+        aiTaskDto.getPayload().put("available_roles", availableRoles);
+
+        // Fetch company-specific provider
+        String provider = companyAiSettingsService.getProviderForCompany(companyId);
+        aiTaskDto.getPayload().put("provider", provider);
+
+        log.info("Sending AI workflow suggest task: correlationId={}, provider={}", aiTaskDto.getCorrelationId(), provider);
         aiRabbitTemplate.convertAndSend(AiRabbitConfig.AI_TASK_QUEUE, aiTaskDto);
     }
 }

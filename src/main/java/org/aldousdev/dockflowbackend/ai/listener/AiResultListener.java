@@ -5,12 +5,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.ai.config.AiRabbitConfig;
 import org.aldousdev.dockflowbackend.ai.dto.AiResultDto;
 import org.aldousdev.dockflowbackend.ai.repository.DocumentAiAnalysisRepository;
-import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Service
@@ -41,8 +38,13 @@ public class AiResultListener {
                 
                 // Extract summary from result
                 Object summaryObj = result.getResult() != null ? result.getResult().get("summary") : null;
-                if (summaryObj instanceof java.util.List) {
-                    entity.setSummary(String.join("; ", (java.util.List<String>) summaryObj));
+                if (summaryObj instanceof java.util.List<?>) {
+                    java.util.List<?> list = (java.util.List<?>) summaryObj;
+                    java.util.List<String> stringList = new java.util.ArrayList<>();
+                    for (Object item : list) {
+                        if (item != null) stringList.add(item.toString());
+                    }
+                    entity.setSummary(String.join("; ", stringList));
                 } else {
                     entity.setSummary(summaryObj != null ? summaryObj.toString() : null);
                 }
@@ -95,8 +97,12 @@ public class AiResultListener {
         }, () -> {
             if ("CHAT_RESPONSE".equalsIgnoreCase(result.getStatus())) {
                 handleChatResponse(result);
+            } else if ("WORKFLOW_SUGGEST_RESPONSE".equalsIgnoreCase(result.getStatus())) {
+                handleWorkflowSuggestResponse(result);
             } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null && result.getCorrelationId().startsWith("chat-")) {
                 handleChatError(result);
+            } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null && result.getCorrelationId().startsWith("wf-suggest-")) {
+                handleWorkflowSuggestError(result);
             } else {
                 // Ignore "PROCESSING" status for records we don't track in DocumentAiAnalysis (like general chat)
                 if (!"PROCESSING".equalsIgnoreCase(result.getStatus())) {
@@ -154,10 +160,58 @@ public class AiResultListener {
             messageDto.setStatus("sent");
 
             // Push to WebSocket
+            log.info("Broadcasting AI message to /topic/channel/{}", channelId);
             messagingTemplate.convertAndSend("/topic/channel/" + channelId, messageDto);
 
         } catch (Exception e) {
             log.error("Failed to process CHAT_RESPONSE", e);
+        }
+    }
+
+    private void handleWorkflowSuggestResponse(AiResultDto result) {
+        try {
+            log.info("Handling WORKFLOW_SUGGEST_RESPONSE: {}", result);
+            java.util.Map<String, Object> data = result.getResult();
+            if (data == null) {
+                log.error("Workflow suggest response has no data");
+                return;
+            }
+
+            String xml = (String) data.get("xml");
+            String correlationId = result.getCorrelationId();
+            
+            // Extract companyId from correlationId: "wf-suggest-{companyId}-{timestamp}"
+            String[] parts = correlationId.split("-");
+            if (parts.length >= 3) {
+                String companyIdStr = parts[2];
+                
+                java.util.Map<String, Object> payload = new java.util.HashMap<>();
+                payload.put("xml", xml);
+                payload.put("correlationId", correlationId);
+                
+                messagingTemplate.convertAndSend("/topic/company/" + companyIdStr + "/workflow-suggest", (Object) payload);
+                log.info("Sent workflow suggestion to company topic: {}", companyIdStr);
+            }
+        } catch (Exception e) {
+            log.error("Failed to process WORKFLOW_SUGGEST_RESPONSE", e);
+        }
+    }
+
+    private void handleWorkflowSuggestError(AiResultDto result) {
+        try {
+            log.info("Handling WORKFLOW_SUGGEST_ERROR for correlation_id={}", result.getCorrelationId());
+            String[] parts = result.getCorrelationId().split("-");
+            if (parts.length >= 3) {
+                String companyIdStr = parts[2];
+                
+                java.util.Map<String, Object> payload = new java.util.HashMap<>();
+                payload.put("error", result.getError() != null ? result.getError() : "AI Workflow Generation failed");
+                payload.put("correlationId", result.getCorrelationId());
+                
+                messagingTemplate.convertAndSend("/topic/company/" + companyIdStr + "/workflow-suggest", (Object) payload);
+            }
+        } catch (Exception e) {
+            log.error("Failed to process WORKFLOW_SUGGEST_ERROR", e);
         }
     }
 }

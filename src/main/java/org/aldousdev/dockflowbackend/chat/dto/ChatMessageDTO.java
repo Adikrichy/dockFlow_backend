@@ -19,6 +19,7 @@ public class ChatMessageDTO {
     private String content;
     private Long senderId;
     private String senderName;
+    private String senderEmail;
     private Long channelId;
     private LocalDateTime timestamp;
     private String type; // "CHAT", "SYSTEM", etc.

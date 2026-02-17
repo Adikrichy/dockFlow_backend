@@ -13,4 +13,6 @@ public class CompanyResponse {
     private String description;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    @com.fasterxml.jackson.annotation.JsonProperty("preferredEditor")
+    private org.aldousdev.dockflowbackend.document_edit.enums.EditorType preferredEditor;
 }

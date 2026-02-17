@@ -265,6 +265,14 @@ public class CompanyController {
         }
 
         if (token == null) {
+            token = Arrays.stream(cookies)
+                    .filter(cookie -> "accessToken".equals(cookie.getName()))
+                    .map(Cookie::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        if (token == null) {
             return ResponseEntity.notFound().build();
         }
 
@@ -344,11 +352,20 @@ public class CompanyController {
     private String getTokenFromRequest(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies != null) {
-            return Arrays.stream(cookies)
+            String token = Arrays.stream(cookies)
                     .filter(cookie -> "jwtWithCompany".equals(cookie.getName()))
                     .map(Cookie::getValue)
                     .findFirst()
                     .orElse(null);
+
+            if (token == null) {
+                token = Arrays.stream(cookies)
+                        .filter(cookie -> "accessToken".equals(cookie.getName()))
+                        .map(Cookie::getValue)
+                        .findFirst()
+                        .orElse(null);
+            }
+            return token;
         }
         return null;
     }

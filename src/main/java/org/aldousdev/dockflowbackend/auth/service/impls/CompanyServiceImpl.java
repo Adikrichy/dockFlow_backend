@@ -55,6 +55,9 @@ public class CompanyServiceImpl implements CompanyService {
 
         Company company = companyMapper.toEntity(request);
         company.setCreatedAt(LocalDateTime.now());
+        if (request.getPreferredEditor() == null) {
+            company.setPreferredEditor(org.aldousdev.dockflowbackend.document_edit.enums.EditorType.ONLYOFFICE);
+        }
         company = companyRepository.save(company);
 
         CompanyRoleEntity ceoRole = null;
@@ -116,11 +119,15 @@ public class CompanyServiceImpl implements CompanyService {
     @Override
     public List<CompanyResponse> getUserCompanies(){
         User currentUser = authService.getCurrentUser();
+        
+        if (currentUser.isAiAssistant()) {
+            return listAll();
+        }
+        
         return membershipRepository.findByUser(currentUser).stream()
                 .map(Membership::getCompany)
                 .map(companyMapper::toDto)
                 .collect(Collectors.toList());
-
     }
 
     @Override
@@ -142,10 +149,9 @@ public class CompanyServiceImpl implements CompanyService {
 
         User currentUser = authService.getCurrentUser();
 
-//        Membership membership = membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
-//                .orElseThrow(() -> new RuntimeException("No access to this company"));
-        membershipRepository.findByCompanyIdAndUserId(id, currentUser.getId())
-                .orElseThrow(()-> new RuntimeException("No access to this company"));
+        if (!currentUser.isMemberOf(id)) {
+            throw new RuntimeException("No access to this company");
+        }
 
 //        String roleName = membership.getRole().getName();
 //        if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
@@ -157,7 +163,18 @@ public class CompanyServiceImpl implements CompanyService {
 //        }
 
 
+        System.out.println("Updating company " + id + ". Preferred editor in request: " + request.getPreferredEditor());
         companyMapper.updateCompany(request, company);
+        
+        if (request.getPreferredEditor() != null) {
+            company.setPreferredEditor(request.getPreferredEditor());
+            System.out.println("Set company preferred editor to: " + company.getPreferredEditor());
+        } else {
+            System.out.println("Preferred editor in request was null, skipping update");
+        }
+        
+        companyRepository.save(company);
+        System.out.println("Saved company " + id + ". Entity value: " + company.getPreferredEditor());
 
         return companyMapper.toDto(company);
     }
@@ -165,11 +182,15 @@ public class CompanyServiceImpl implements CompanyService {
     @Override
     public void deleteCompany(Long companyId){
         User currentUser = authService.getCurrentUser();
-
+        if (!currentUser.isMemberOf(companyId)) {
+            throw new RuntimeException("No access to this company");
+        }
+        
+        // Use repo for administrative role check (AI is not an admin by default)
         Membership membership = membershipRepository.findByCompanyIdAndUserId(companyId,currentUser.getId())
-                .orElseThrow(() -> new RuntimeException("No access to this company"));
-
-        String roleName = membership.getRole().getName();
+                .orElse(null);
+        
+        String roleName = membership != null ? membership.getRole().getName() : "MEMBER";
         if(!roleName.equals("CEO") && !roleName.equals("DIRECTOR")){
             throw new RuntimeException("Access denied: Only CEO or Director can update company");
         }
@@ -382,18 +403,15 @@ public class CompanyServiceImpl implements CompanyService {
             throw new BadRequestException("Cannot modify system role");
         }
 
-        // Verify that the user is a member of the company for this role
-        Membership membership = membershipRepository.findByCompanyIdAndUserId(
-                        role.getCompany().getId(), currentUser.getId())
-                .orElseThrow(() -> new ForbiddenException("You do not have access to roles in this company"));
-
-        // Get current user's level
-        Integer currentUserLevel = membership.getRole().getLevel();
+        Integer userLevel = currentUser.getRoleLevelInCompany(role.getCompany().getId());
+        if (userLevel == null) {
+            throw new ForbiddenException("You do not have access to roles in this company");
+        }
 
         // Cannot update a role to a level higher than your own
-        if (request.getRoleLevel() > currentUserLevel) {
+        if (request.getRoleLevel() > userLevel) {
             throw new ForbiddenException(
-                    "Cannot assign role level higher than your own (" + currentUserLevel + ")");
+                    "Cannot assign role level higher than your own (" + userLevel + ")");
         }
 
         // Check for duplicate name in the company (excluding the current role)
@@ -433,9 +451,9 @@ public class CompanyServiceImpl implements CompanyService {
             throw new BadRequestException("Cannot delete system role: " + role.getName());
         }
 
-        // Verify company access
-        membershipRepository.findByCompanyIdAndUserId(role.getCompany().getId(), currentUser.getId())
-                .orElseThrow(() -> new ForbiddenException("You do not have access to this company"));
+        if (!currentUser.isMemberOf(role.getCompany().getId())) {
+             throw new ForbiddenException("You do not have access to this company");
+        }
 
         // Cannot delete a role if it is assigned to users
         boolean isAssigned = membershipRepository.existsByRoleId(roleId);
