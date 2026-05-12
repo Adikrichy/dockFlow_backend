@@ -137,7 +137,7 @@ public class ConditionEvaluator {
     private static Object resolveMetadataField(String field, Document document) {
         // Placeholder for metadata resolution
         // Could be JSON field in database
-        return null;
+        return "";
     }
 
     /**

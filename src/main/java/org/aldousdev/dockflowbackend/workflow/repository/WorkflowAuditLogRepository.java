@@ -31,4 +31,7 @@ public interface WorkflowAuditLogRepository extends JpaRepository<WorkflowAuditL
 
     @Query("SELECT COUNT(log) FROM WorkflowAuditLog log WHERE log.actionType = :actionType AND log.workflowInstance = :instance")
     Long countActionsByType(@Param("actionType") String actionType, @Param("instance") WorkflowInstance instance);
+
+    @Query("SELECT log FROM WorkflowAuditLog log WHERE log.workflowInstance.document.company.id = :companyId ORDER BY log.createdAt DESC")
+    org.springframework.data.domain.Page<WorkflowAuditLog> findByWorkflowInstanceDocumentCompanyIdOrderByCreatedAtDesc(@Param("companyId") Long companyId, org.springframework.data.domain.Pageable pageable);
 }

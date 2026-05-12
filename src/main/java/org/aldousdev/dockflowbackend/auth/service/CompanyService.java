@@ -1,6 +1,8 @@
 package org.aldousdev.dockflowbackend.auth.service;
 
+import org.aldousdev.dockflowbackend.auth.dto.request.AcceptInviteRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
+import org.aldousdev.dockflowbackend.auth.dto.request.InviteUserRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
@@ -13,7 +15,7 @@ public interface CompanyService {
     CreateCompanyResponse create(CompanyRequest companyRequest);
     List<CompanyResponse> getUserCompanies();
     CompanyResponse updateCompany(Long id,CompanyRequest companyRequest, String token);
-    String enterCompany(Long id, byte[] keyFileBytes);
+    String enterCompany(Long id, byte[] keyFileBytes, String password);
     String leaveCompany();
     CompanyRoleEntity initDefaultRoles(Company company, User currentUser);
     List<CreateRoleResponse> getAllRoles(Long companyId);
@@ -26,4 +28,6 @@ public interface CompanyService {
     List<CompanyResponse> listAll();
     List<CompanyResponse> searchByName(String name);
     void updateMemberRole(Long userId, Long roleId);
+    void inviteUser(Long companyId, InviteUserRequest request);
+    byte[] acceptInvite(AcceptInviteRequest request);
 }

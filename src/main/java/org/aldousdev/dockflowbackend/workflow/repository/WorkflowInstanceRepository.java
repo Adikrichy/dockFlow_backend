@@ -13,4 +13,7 @@ public interface WorkflowInstanceRepository extends JpaRepository<WorkflowInstan
     Optional<WorkflowInstance> findByIdWithDocument(@Param("id") Long id);
 
     List<WorkflowInstance> findByDocumentId(Long documentId);
+
+    @Query("SELECT COUNT(wi) FROM WorkflowInstance wi WHERE wi.document.company.id = :companyId AND wi.status = :status")
+    long countByDocumentCompanyIdAndStatus(@Param("companyId") Long companyId, @Param("status") org.aldousdev.dockflowbackend.workflow.enums.WorkFlowStatus status);
 }

@@ -14,4 +14,5 @@ public class UpdateRoleResponse {
     private String name;
     private Integer roleLevel;
     private Boolean isSystem;
+    private Boolean canViewReports;
 }

@@ -28,4 +28,15 @@ public class EmailServiceImpl {
         message.setText("To reset your password, click the link below:\n" + resetLink);
         mailSender.send(message);
     }
+
+    public void sendInviteEmail(String to, String inviteLink, String companyName){
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setTo(to);
+        message.setSubject("Invite to company " + companyName);
+        message.setText("Вас пригласили вступить в компанию " + companyName + " на платформе Dockflow.\n\n" +
+                "Для принятия приглашения перейдите по ссылке:\n" + inviteLink + "\n\n" +
+                "Ссылка действительна 48 часов.\n\n" +
+                "Если вы не ожидали это приглашение — просто проигнорируйте письмо.");
+        mailSender.send(message);
+    }
 }

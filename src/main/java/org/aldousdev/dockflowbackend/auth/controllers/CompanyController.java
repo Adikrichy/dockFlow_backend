@@ -13,10 +13,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
-import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
-import org.aldousdev.dockflowbackend.auth.dto.request.CreateRoleRequest;
-import org.aldousdev.dockflowbackend.auth.dto.request.UpdateMemberRoleRequest;
-import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
+import org.aldousdev.dockflowbackend.auth.dto.request.*;
 import org.aldousdev.dockflowbackend.auth.dto.response.*;
 import org.aldousdev.dockflowbackend.auth.entity.Company;
 import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
@@ -108,20 +105,20 @@ public class CompanyController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/join/{companyId}")
-    @Operation(summary = "Присоединиться к компании",
-            description = "Добавляет текущего пользователя в список участников компании с ролью по умолчанию (Worker). " +
-                    "Возвращает PKCS#12 ключ для последующего входа")
-    public ResponseEntity<byte[]> joinCompany(
-            @PathVariable Long companyId) {
-        // Always use default password for key encryption
-        byte[] keyFileBytes = companyService.joinCompany(companyId);
-        
-        return ResponseEntity.ok()
-                .header("Content-Disposition", "attachment; filename=company_" + companyId + "_key.p12")
-                .header("Content-Type", "application/x-pkcs12")
-                .body(keyFileBytes);
-    }
+//    @PostMapping("/join/{companyId}")
+//    @Operation(summary = "Присоединиться к компании",
+//            description = "Добавляет текущего пользователя в список участников компании с ролью по умолчанию (Worker). " +
+//                    "Возвращает PKCS#12 ключ для последующего входа")
+//    public ResponseEntity<byte[]> joinCompany(
+//            @PathVariable Long companyId) {
+//        // Always use default password for key encryption
+//        byte[] keyFileBytes = companyService.joinCompany(companyId);
+//
+//        return ResponseEntity.ok()
+//                .header("Content-Disposition", "attachment; filename=company_" + companyId + "_key.p12")
+//                .header("Content-Type", "application/x-pkcs12")
+//                .body(keyFileBytes);
+//    }
 
     @PostMapping("/enter/{companyId}")
     @Operation(summary = "Войти в компанию", 
@@ -137,11 +134,12 @@ public class CompanyController {
             @Parameter(description = "ID компании для входа", required = true)
             @PathVariable Long companyId,
             @RequestParam("keyFile") org.springframework.web.multipart.MultipartFile keyFile,
+            @RequestParam("password") String password,
             HttpServletResponse response,
             HttpServletRequest request) throws java.io.IOException {
         
         byte[] keyFileBytes = keyFile.getBytes();
-        String jwt = companyService.enterCompany(companyId, keyFileBytes);
+        String jwt = companyService.enterCompany(companyId, keyFileBytes, password);
 
         clearAuthCookies(request, response);
 
@@ -210,6 +208,7 @@ public class CompanyController {
                 .name(request.getRoleName())
                 .level(request.getLevel())
                 .isSystem(false)
+                .canViewReports(request.getCanViewReports())
                 .company(company)
                 .build();
         companyRoleEntityRepository.save(role);
@@ -218,7 +217,8 @@ public class CompanyController {
                 role.getId(),
                 role.getName(),
                 role.getLevel(),
-                role.getIsSystem()
+                role.getIsSystem(),
+                role.getCanViewReports()
         );
 
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -347,6 +347,23 @@ public class CompanyController {
         
         companyService.updateMemberRole(userId, request.getRoleId());
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{companyId}/invite")
+    @RequiresRoleLevel(100)
+    public ResponseEntity<Void> inviteCompany(@PathVariable Long companyId,
+                                              @RequestBody InviteUserRequest request) {
+        companyService.inviteUser(companyId, request);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/accept-invite")
+    public ResponseEntity<byte[]> acceptInvite(@RequestBody AcceptInviteRequest request) {
+        byte[] keyFileBytes = companyService.acceptInvite(request);
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=company_key.p12")
+                .header("Content-Type", "application/x-pkcs12")
+                .body(keyFileBytes);
     }
 
     private String getTokenFromRequest(HttpServletRequest request) {

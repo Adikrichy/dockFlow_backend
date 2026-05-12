@@ -12,10 +12,14 @@ import org.aldousdev.dockflowbackend.workflow.repository.DocumentVersionReposito
 import org.aldousdev.dockflowbackend.reports.entity.SavedReport;
 import org.aldousdev.dockflowbackend.reports.repository.SavedReportRepository;
 import org.aldousdev.dockflowbackend.auth.service.AuthService;
+import org.aldousdev.dockflowbackend.ai.repository.ReportAiAnalysisRepository;
+import org.aldousdev.dockflowbackend.ai.producer.AiTaskProducer;
+import org.aldousdev.dockflowbackend.ai.entity.ReportAiAnalysis;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -40,6 +44,8 @@ public class ReportsService {
     private final SavedReportRepository savedReportRepository;
     private final CompanyRepository companyRepository;
     private final AuthService authService;
+    private final ReportAiAnalysisRepository reportAiAnalysisRepository;
+    private final AiTaskProducer aiTaskProducer;
 
     public void updateRolePermissions(Long roleId, Long companyId, Boolean canViewReports) {
         var role = companyRoleEntityRepository.findById(roleId)
@@ -70,8 +76,8 @@ public class ReportsService {
                 .orElse(false);
     }
 
-    public ReportDataDTO getReportSummary(ReportFiltersDTO filters) {
-        log.info("Generating report summary with filters: {}", filters);
+    public ReportDataDTO getReportSummary(ReportFiltersDTO filters, Long userId) {
+        log.info("Generating report summary with filters: {}, userId: {}", filters, userId);
 
         LocalDateTime startDate = getStartDate(filters.getTimeRange());
         LocalDateTime endDate = LocalDateTime.now();
@@ -91,13 +97,33 @@ public class ReportsService {
             completedTasksInRange = taskRepository.findByCompletedAtBetween(startDate, endDate);
         }
 
-        long activeUsersCount = securityAuditRepository.countDistinctByTimestampAfter(startDate);
+        // Apply Personal Filter If Provided
+        if (userId != null) {
+            documents = documents.stream()
+                .filter(d -> d.getUploadedBy() != null && d.getUploadedBy().getId().equals(userId))
+                .collect(Collectors.toList());
+            allTasksInRange = allTasksInRange.stream()
+                .filter(t -> t.getCompletedBy() != null && t.getCompletedBy().getId().equals(userId))
+                .collect(Collectors.toList());
+            completedTasksInRange = completedTasksInRange.stream()
+                .filter(t -> t.getCompletedBy() != null && t.getCompletedBy().getId().equals(userId))
+                .collect(Collectors.toList());
+        }
+
+        long activeUsersCount = userId != null ? 1 : securityAuditRepository.countDistinctByTimestampAfter(startDate);
         
         long totalVersions;
         if (companyId != null) {
             totalVersions = documentVersionRepository.countByCompanyIdAndCreatedAtBetween(companyId, startDate, endDate);
         } else {
             totalVersions = documentVersionRepository.countByCreatedAtBetween(startDate, endDate);
+        }
+        
+        // If personal mode, we need to manually count versions too for accuracy
+        if (userId != null) {
+             totalVersions = documents.stream()
+                .mapToLong(d -> documentVersionRepository.countByDocumentId(d.getId()))
+                .sum();
         }
         
         ReportDataDTO reportData = new ReportDataDTO();
@@ -112,7 +138,6 @@ public class ReportsService {
                 .count());
         
         // "Approved" and "Rejected" are based on activity in this period (tasks completed)
-        // We count unique documents approved/rejected to avoid over-counting multi-step workflows
         reportData.setApprovedDocuments(completedTasksInRange.stream()
                 .filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.APPROVED.equals(t.getStatus()))
                 .map(t -> t.getWorkflowInstance().getDocument().getId())
@@ -133,32 +158,32 @@ public class ReportsService {
         reportData.setAverageProcessingTime(Math.round(avgProcessingTime * 10.0) / 10.0);
 
         // User statistics
-        reportData.setTotalUsers(userRepository.count());
+        reportData.setTotalUsers(userId != null ? 1 : userRepository.count());
         reportData.setActiveUsers(activeUsersCount);
 
-        // Weekly data
-        reportData.setWeeklyData(getWeeklyData(filters));
+        // Weekly data (passing userId)
+        reportData.setWeeklyData(getWeeklyData(filters, userId));
         
-        // User activity
-        reportData.setUserActivity(getUserActivityInternal(filters));
+        // User activity (for personal mode, this is just the user themselves)
+        reportData.setUserActivity(getUserActivityInternal(filters, userId));
         
-        // Document types
-        reportData.setDocumentTypes(getDocumentTypesInternal(filters));
+        // Document types (passing userId filter implicitly via the internal method update)
+        reportData.setDocumentTypes(getDocumentTypesInternal(filters, userId));
 
         return reportData;
     }
 
-    public List<Map<String, Object>> getWeeklyActivity(ReportFiltersDTO filters) {
-        return getWeeklyData(filters);
+    public List<Map<String, Object>> getWeeklyActivity(ReportFiltersDTO filters, Long userId) {
+        return getWeeklyData(filters, userId);
     }
-
-    public List<Map<String, Object>> getWeeklyActivity(String timeRange) {
+ 
+    public List<Map<String, Object>> getWeeklyActivity(String timeRange, Long userId) {
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        return getWeeklyData(filters);
+        return getWeeklyData(filters, userId);
     }
     
-    private List<Map<String, Object>> getWeeklyData(ReportFiltersDTO filters) {
+    private List<Map<String, Object>> getWeeklyData(ReportFiltersDTO filters, Long userId) {
         LocalDateTime startDate = getStartDate(filters.getTimeRange());
         LocalDateTime endDate = LocalDateTime.now();
         Long companyId = parseCompanyId(filters.getCompany());
@@ -174,55 +199,108 @@ public class ReportsService {
             completedTasks = taskRepository.findByCompletedAtBetween(startDate, endDate);
         }
 
-        // Group documents by date (for "pending/new" activity)
-        Map<LocalDate, List<Document>> docsByDate = uploadedDocuments.stream()
-            .collect(Collectors.groupingBy(d -> d.getUploadedAt().toLocalDate()));
+        // Apply Personal Filter
+        if (userId != null) {
+            uploadedDocuments = uploadedDocuments.stream()
+                .filter(d -> d.getUploadedBy() != null && d.getUploadedBy().getId().equals(userId))
+                .collect(Collectors.toList());
+            completedTasks = completedTasks.stream()
+                .filter(t -> t.getCompletedBy() != null && t.getCompletedBy().getId().equals(userId))
+                .collect(Collectors.toList());
+        }
 
-        // Group tasks by date (for "approved/rejected" activity)
-        Map<LocalDate, List<Task>> tasksByDate = completedTasks.stream()
-            .collect(Collectors.groupingBy(t -> t.getCompletedAt().toLocalDate()));
+        // Clip empty period at the start if "All Time"
+        if ("alltime".equalsIgnoreCase(filters.getTimeRange()) && !uploadedDocuments.isEmpty()) {
+            LocalDateTime earliestDoc = uploadedDocuments.stream()
+                .map(Document::getUploadedAt)
+                .min(LocalDateTime::compareTo)
+                .get();
+            if (earliestDoc.isAfter(startDate)) {
+                startDate = earliestDoc.withDayOfMonth(1).with(LocalTime.MIN);
+            }
+        }
 
-        List<Map<String, Object>> weeklyData = new ArrayList<>();
         long daysDiff = ChronoUnit.DAYS.between(startDate, endDate) + 1;
+        List<Map<String, Object>> weeklyData = new ArrayList<>();
         
-        for (int i = 0; i < daysDiff; i++) {
-            LocalDate date = startDate.plusDays(i).toLocalDate();
-            if (date.isAfter(endDate.toLocalDate())) break;
+        if (daysDiff > 45) {
+            // Group by Year-Month
+            Map<String, List<Document>> docsByMonth = uploadedDocuments.stream()
+                .collect(Collectors.groupingBy(d -> d.getUploadedAt().format(DateTimeFormatter.ofPattern("yyyy-MM"))));
+            Map<String, List<Task>> tasksByMonth = completedTasks.stream()
+                .collect(Collectors.groupingBy(t -> t.getCompletedAt().format(DateTimeFormatter.ofPattern("yyyy-MM"))));
             
-            List<Document> dayDocs = docsByDate.getOrDefault(date, Collections.emptyList());
-            List<Task> dayTasks = tasksByDate.getOrDefault(date, Collections.emptyList());
+            LocalDateTime current = startDate.withDayOfMonth(1).with(LocalTime.MIN);
+            boolean dataFound = false;
             
-            Map<String, Object> dayData = new HashMap<>();
-            String dayLabel = date.format(DateTimeFormatter.ofPattern("EEE")); 
-            
-            dayData.put("day", dayLabel);
-            // Approved and Rejected are based on TASKS completed that day
-            dayData.put("approved", dayTasks.stream()
-                    .filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.APPROVED.equals(t.getStatus()))
-                    .count());
-            dayData.put("rejected", dayTasks.stream()
-                    .filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.REJECTED.equals(t.getStatus()))
-                    .count());
-            // Pending activity is based on NEW DOCUMENTS uploaded that day
-            dayData.put("pending", dayDocs.size());
-            
-            weeklyData.add(dayData);
+            while (!current.isAfter(endDate)) {
+                String label = current.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+                String displayLabel = current.format(DateTimeFormatter.ofPattern("MMM yy"));
+                
+                List<Document> monthDocs = docsByMonth.getOrDefault(label, Collections.emptyList());
+                List<Task> monthTasks = tasksByMonth.getOrDefault(label, Collections.emptyList());
+                
+                long approved = monthTasks.stream().filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.APPROVED.equals(t.getStatus())).count();
+                long rejected = monthTasks.stream().filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.REJECTED.equals(t.getStatus())).count();
+                long pending = monthDocs.size();
+
+                // Skip leading empty months for All Time
+                if (!dataFound && "alltime".equalsIgnoreCase(filters.getTimeRange()) && pending == 0 && approved == 0 && rejected == 0) {
+                    current = current.plusMonths(1);
+                    continue;
+                }
+                dataFound = true;
+                
+                Map<String, Object> point = new HashMap<>();
+                point.put("day", displayLabel);
+                point.put("approved", approved);
+                point.put("rejected", rejected);
+                point.put("pending", pending);
+                
+                weeklyData.add(point);
+                current = current.plusMonths(1);
+            }
+        } else {
+            // Group documents by date
+            Map<LocalDate, List<Document>> docsByDate = uploadedDocuments.stream()
+                .collect(Collectors.groupingBy(d -> d.getUploadedAt().toLocalDate()));
+            Map<LocalDate, List<Task>> tasksByDate = completedTasks.stream()
+                .collect(Collectors.groupingBy(t -> t.getCompletedAt().toLocalDate()));
+                
+            for (int i = 0; i < daysDiff; i++) {
+                LocalDate date = startDate.plusDays(i).toLocalDate();
+                if (date.isAfter(endDate.toLocalDate())) break;
+                
+                List<Document> dayDocs = docsByDate.getOrDefault(date, Collections.emptyList());
+                List<Task> dayTasks = tasksByDate.getOrDefault(date, Collections.emptyList());
+                
+                Map<String, Object> dayData = new HashMap<>();
+                String dayLabel = daysDiff <= 14 ? date.format(DateTimeFormatter.ofPattern("EEE")) : date.format(DateTimeFormatter.ofPattern("dd MMM")); 
+                
+                dayData.put("day", dayLabel);
+                dayData.put("approved", dayTasks.stream().filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.APPROVED.equals(t.getStatus())).count());
+                dayData.put("rejected", dayTasks.stream().filter(t -> org.aldousdev.dockflowbackend.workflow.enums.TaskStatus.REJECTED.equals(t.getStatus())).count());
+                dayData.put("pending", dayDocs.size());
+                
+                weeklyData.add(dayData);
+            }
         }
         
         return weeklyData;
     }
 
-    public List<Map<String, Object>> getUserActivity(ReportFiltersDTO filters) {
-        return getUserActivityInternal(filters);
-    }
 
-    public List<Map<String, Object>> getUserActivity(String timeRange) {
+    public List<Map<String, Object>> getUserActivity(ReportFiltersDTO filters, Long userId) {
+        return getUserActivityInternal(filters, userId);
+    }
+ 
+    public List<Map<String, Object>> getUserActivity(String timeRange, Long userId) {
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        return getUserActivityInternal(filters);
+        return getUserActivityInternal(filters, userId);
     }
 
-    private List<Map<String, Object>> getUserActivityInternal(ReportFiltersDTO filters) {
+    private List<Map<String, Object>> getUserActivityInternal(ReportFiltersDTO filters, Long userId) {
         LocalDateTime startDate = getStartDate(filters.getTimeRange());
         LocalDateTime endDate = LocalDateTime.now();
         Long companyId = parseCompanyId(filters.getCompany());
@@ -231,6 +309,13 @@ public class ReportsService {
         if (companyId != null) {
             completedTasks = completedTasks.stream()
                 .filter(t -> t.getWorkflowInstance().getDocument().getCompany().getId().equals(companyId))
+                .collect(Collectors.toList());
+        }
+        
+        // Apply Personal Filter
+        if (userId != null) {
+            completedTasks = completedTasks.stream()
+                .filter(t -> t.getCompletedBy() != null && t.getCompletedBy().getId().equals(userId))
                 .collect(Collectors.toList());
         }
 
@@ -266,17 +351,17 @@ public class ReportsService {
         return userActivity;
     }
 
-    public List<Map<String, Object>> getDocumentTypes(ReportFiltersDTO filters) {
-        return getDocumentTypesInternal(filters);
+    public List<Map<String, Object>> getDocumentTypes(ReportFiltersDTO filters, Long userId) {
+        return getDocumentTypesInternal(filters, userId);
     }
-
-    public List<Map<String, Object>> getDocumentTypes(String timeRange) {
+ 
+    public List<Map<String, Object>> getDocumentTypes(String timeRange, Long userId) {
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        return getDocumentTypesInternal(filters);
+        return getDocumentTypesInternal(filters, userId);
     }
     
-    private List<Map<String, Object>> getDocumentTypesInternal(ReportFiltersDTO filters) {
+    private List<Map<String, Object>> getDocumentTypesInternal(ReportFiltersDTO filters, Long userId) {
         LocalDateTime startDate = getStartDate(filters.getTimeRange());
         LocalDateTime endDate = LocalDateTime.now();
         Long companyId = parseCompanyId(filters.getCompany());
@@ -285,6 +370,13 @@ public class ReportsService {
         if (companyId != null) {
             documents = documents.stream()
                 .filter(d -> d.getCompany().getId().equals(companyId))
+                .collect(Collectors.toList());
+        }
+
+        // Apply Personal Filter
+        if (userId != null) {
+            documents = documents.stream()
+                .filter(d -> d.getUploadedBy() != null && d.getUploadedBy().getId().equals(userId))
                 .collect(Collectors.toList());
         }
 
@@ -307,8 +399,8 @@ public class ReportsService {
         return documentTypes;
     }
 
-    public ByteArrayResource exportReport(ReportFiltersDTO filters, String format) {
-        String content = generateReportContent(filters, format);
+    public ByteArrayResource exportReport(ReportFiltersDTO filters, String format, Long userId) {
+        String content = generateReportContent(filters, format, userId);
         return new ByteArrayResource(content.getBytes());
     }
 
@@ -364,7 +456,7 @@ public class ReportsService {
         return stats;
     }
 
-    private LocalDateTime getStartDate(String timeRange) {
+    public LocalDateTime getStartDate(String timeRange) {
         LocalDateTime now = LocalDateTime.now();
         if (timeRange == null) return now.minus(7, ChronoUnit.DAYS);
         
@@ -372,9 +464,11 @@ public class ReportsService {
             case "lastweek" -> now.minus(14, ChronoUnit.DAYS);
             case "thismonth" -> now.withDayOfMonth(1).with(LocalTime.MIN);
             case "thisyear" -> now.withDayOfYear(1).with(LocalTime.MIN);
+            case "alltime" -> LocalDateTime.of(2020, 1, 1, 0, 0); // Start of system life
             default -> now.minus(7, ChronoUnit.DAYS); // thisWeek
         };
     }
+
     
     private Long parseCompanyId(String company) {
         if (company == null || company.isBlank()) return null;
@@ -385,8 +479,8 @@ public class ReportsService {
         }
     }
 
-    private String generateReportContent(ReportFiltersDTO filters, String format) {
-        ReportDataDTO data = getReportSummary(filters);
+    private String generateReportContent(ReportFiltersDTO filters, String format, Long userId) {
+        ReportDataDTO data = getReportSummary(filters, userId);
         StringBuilder content = new StringBuilder();
         
         if ("csv".equalsIgnoreCase(format)) {
@@ -444,6 +538,46 @@ public class ReportsService {
             content.append("Avg Processing Time: ").append(data.getAverageProcessingTime()).append(" hours\n");
         }
         
+        
         return content.toString();
+    }
+
+    @Transactional
+    public ReportAiAnalysis getAiInsights(Long companyId, String timeRange) {
+        // Look for existing analysis in the last 12 hours
+        LocalDateTime twelveHoursAgo = LocalDateTime.now().minusHours(12);
+        Optional<ReportAiAnalysis> existing = reportAiAnalysisRepository
+                .findFirstByCompanyIdAndTimeRangeAndUpdatedAtAfterOrderByUpdatedAtDesc(companyId, timeRange, twelveHoursAgo);
+        
+        if (existing.isPresent()) {
+            ReportAiAnalysis analysis = existing.get();
+            if ("SUCCESS".equals(analysis.getStatus())) {
+                return analysis;
+            } else if ("PENDING".equals(analysis.getStatus()) && analysis.getUpdatedAt().isAfter(LocalDateTime.now().minusMinutes(5))) {
+                return analysis; // return pending if it's recent (still processing)
+            }
+            // If it's old PENDING or ERROR, we proceed to create a new one
+        }
+        
+        // Otherwise, trigger new analysis
+        ReportFiltersDTO filters = new ReportFiltersDTO();
+        filters.setTimeRange(timeRange);
+        filters.setCompany(companyId.toString());
+        ReportDataDTO currentData = getReportSummary(filters, null);
+        
+        String correlationId = "report-" + companyId + "-" + timeRange + "-" + System.currentTimeMillis();
+        
+        ReportAiAnalysis analysis = ReportAiAnalysis.builder()
+                .companyId(companyId)
+                .timeRange(timeRange)
+                .status("PENDING")
+                .correlationId(correlationId)
+                .build();
+        
+        analysis = reportAiAnalysisRepository.save(analysis);
+        
+        aiTaskProducer.sendReportInsights(currentData, companyId, timeRange, correlationId);
+        
+        return analysis;
     }
 }

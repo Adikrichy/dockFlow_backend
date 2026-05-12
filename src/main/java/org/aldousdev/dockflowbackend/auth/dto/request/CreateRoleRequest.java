@@ -15,4 +15,6 @@ public class CreateRoleRequest {
     @Min(1)
     @Max(100)
     private Integer level;
+    
+    private Boolean canViewReports;
 }

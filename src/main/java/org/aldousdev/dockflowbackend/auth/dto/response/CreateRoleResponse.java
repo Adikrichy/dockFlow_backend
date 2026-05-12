@@ -12,4 +12,5 @@ public class CreateRoleResponse {
     private String name;
     private Integer level;
     private Boolean isSystem;
+    private Boolean canViewReports;
 }

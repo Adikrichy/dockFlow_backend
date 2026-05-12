@@ -228,4 +228,22 @@ public class AiTaskProducer {
         log.info("Sending AI workflow suggest task: correlationId={}, provider={}", aiTaskDto.getCorrelationId(), provider);
         aiRabbitTemplate.convertAndSend(AiRabbitConfig.AI_TASK_QUEUE, aiTaskDto);
     }
+
+    public void sendReportInsights(org.aldousdev.dockflowbackend.reports.dto.ReportDataDTO data, Long companyId, String timeRange, String correlationId) {
+        AiTaskDto aiTaskDto = new AiTaskDto();
+        aiTaskDto.setType("REPORT_INSIGHTS");
+        aiTaskDto.setCorrelationId(correlationId);
+        aiTaskDto.setCreatedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString());
+        aiTaskDto.setReplyTo(AiRabbitConfig.CORE_RESULTS_QUEUE);
+
+        aiTaskDto.getPayload().put("report_data", data);
+        aiTaskDto.getPayload().put("company_id", companyId);
+        aiTaskDto.getPayload().put("time_range", timeRange);
+        
+        String provider = companyAiSettingsService.getProviderForCompany(companyId);
+        aiTaskDto.getPayload().put("provider", provider);
+
+        log.info("Sending AI report insights task: correlationId={}, provider={}", aiTaskDto.getCorrelationId(), provider);
+        aiRabbitTemplate.convertAndSend(AiRabbitConfig.AI_TASK_QUEUE, aiTaskDto);
+    }
 }

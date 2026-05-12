@@ -210,17 +210,18 @@ public class DigitalSignatureService {
      * Verify uploaded .p12 file and extract public key for validation
      * Password is not required - we use default password that was used during key creation
      */
-    public boolean verifyKeyFile(byte[] p12FileBytes, Long userId, Long companyId) {
+    public boolean verifyKeyFile(byte[] p12FileBytes, Long userId, Long companyId, String password) {
         try {
-            // Use default password - same as used during key creation
+            // Convert password to ASCII
+            String asciiPassword = convertToAscii(password);
+            
             log.info("=== KEY VERIFICATION STARTED ===");
             log.info("userId: {}, companyId: {}", userId, companyId);
             log.info("Received file size: {} bytes", p12FileBytes.length);
-            String defaultPassword = "defaultPassword123";
             
-            // Load PKCS#12 keystore with default password
+            // Load PKCS#12 keystore with provided password
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
-            keyStore.load(new java.io.ByteArrayInputStream(p12FileBytes), defaultPassword.toCharArray());
+            keyStore.load(new java.io.ByteArrayInputStream(p12FileBytes), asciiPassword.toCharArray());
             log.info("Keystore successfully loaded with password");
 
             // Get the alias (should be company_{companyId}_user_{userId})

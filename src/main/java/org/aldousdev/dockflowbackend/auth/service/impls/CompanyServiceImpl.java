@@ -1,26 +1,26 @@
 package org.aldousdev.dockflowbackend.auth.service.impls;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.components.RequiresRoleLevel;
+import org.aldousdev.dockflowbackend.auth.dto.request.AcceptInviteRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.CompanyRequest;
+import org.aldousdev.dockflowbackend.auth.dto.request.InviteUserRequest;
 import org.aldousdev.dockflowbackend.auth.dto.request.UpdateRoleRequest;
 import org.aldousdev.dockflowbackend.auth.dto.response.*;
-import org.aldousdev.dockflowbackend.auth.entity.Company;
-import org.aldousdev.dockflowbackend.auth.entity.CompanyRoleEntity;
-import org.aldousdev.dockflowbackend.auth.entity.Membership;
-import org.aldousdev.dockflowbackend.auth.entity.User;
+import org.aldousdev.dockflowbackend.auth.entity.*;
+import org.aldousdev.dockflowbackend.auth.enums.InviteChannel;
 import org.aldousdev.dockflowbackend.auth.enums.UserType;
 import org.aldousdev.dockflowbackend.auth.exceptions.ForbiddenException;
 import org.aldousdev.dockflowbackend.auth.exceptions.CompanyAccessDeniedException;
 import org.aldousdev.dockflowbackend.auth.exceptions.BadRequestException;
 import org.aldousdev.dockflowbackend.auth.exceptions.ResourceNotFoundException;
-import org.aldousdev.dockflowbackend.auth.repository.CompanyRepository;
-import org.aldousdev.dockflowbackend.auth.repository.CompanyRoleEntityRepository;
-import org.aldousdev.dockflowbackend.auth.repository.MembershipRepository;
-import org.aldousdev.dockflowbackend.auth.repository.UserRepository;
+import org.aldousdev.dockflowbackend.auth.repository.*;
 import org.aldousdev.dockflowbackend.auth.security.JWTService;
 import org.aldousdev.dockflowbackend.auth.mapper.CompanyMapper;
 import org.aldousdev.dockflowbackend.auth.service.CompanyService;
+import org.aldousdev.dockflowbackend.auth.service.DigitalSignatureService;
+import org.aldousdev.dockflowbackend.auth.service.TelegramProducer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -30,14 +30,12 @@ import org.aldousdev.dockflowbackend.workflow.event.WorkflowEventBroadcaster;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CompanyServiceImpl implements CompanyService {
     private final CompanyRepository companyRepository;
     private final CompanyMapper companyMapper;
@@ -48,6 +46,11 @@ public class CompanyServiceImpl implements CompanyService {
     private final CompanyRoleEntityRepository companyRoleEntityRepository;
     private final org.aldousdev.dockflowbackend.auth.service.DigitalSignatureService digitalSignatureService;
     private final WorkflowEventBroadcaster workflowEventBroadcaster;
+    private final CompanyInviteTokenRepository companyInviteTokenRepository;
+    private final EmailServiceImpl emailService;
+    private final TelegramProducer telegramProducer;
+    private final TelegramBindingRepository telegramBindingRepository;
+
 
     @Override
     public CreateCompanyResponse create(CompanyRequest request){
@@ -84,11 +87,13 @@ public class CompanyServiceImpl implements CompanyService {
         currentUser.setUserType(UserType.COMPANY_OWNER);
         userRepository.save(currentUser);
 
-        // Always use default password for key encryption
-        // This ensures that key verification works without requiring password input
-        String keyPassword = "defaultPassword123";
+        // Use password from the request
+        String keyPassword = request.getP12Password();
+        if (keyPassword == null || keyPassword.isEmpty()) {
+            keyPassword = "defaultPassword123"; // Fallback for safety, but UI should enforce it
+        }
         
-        // Generate access key for the user (always with default password)
+        // Generate access key for the user (always with user password)
         org.aldousdev.dockflowbackend.auth.entity.CompanyAccessKey accessKey = 
             digitalSignatureService.generateAccessKey(currentUser, company, keyPassword);
         
@@ -102,6 +107,7 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("companyRole", ceoRole.getName());
         claims.put("companyId", company.getId());
         claims.put("companyRoleLevel", ceoRole.getLevel());
+        claims.put("canViewReports", true);
 
         String jwt = jwtService.generateCompanyToken(currentUser,claims);
 
@@ -203,17 +209,17 @@ public class CompanyServiceImpl implements CompanyService {
     }
 
     @Override
-    public String enterCompany(Long id, byte[] keyFileBytes){
+    public String enterCompany(Long id, byte[] keyFileBytes, String password){
         User user = authService.getCurrentUser();
 
         Membership membership = membershipRepository.findByCompanyIdAndUserId(
                 id,user.getId()).orElseThrow(() -> new CompanyAccessDeniedException("No access to this company"));
 
-        // Verify the key file before granting access (password not needed - using default)
-        boolean isKeyValid = digitalSignatureService.verifyKeyFile(keyFileBytes, user.getId(), id);
+        // Verify the key file before granting access using provided user password
+        boolean isKeyValid = digitalSignatureService.verifyKeyFile(keyFileBytes, user.getId(), id, password);
         
         if (!isKeyValid) {
-            throw new CompanyAccessDeniedException("Invalid key file");
+            throw new CompanyAccessDeniedException("Invalid key file or password");
         }
 
         Map<String, Object> claims = new HashMap<>();
@@ -223,6 +229,7 @@ public class CompanyServiceImpl implements CompanyService {
         claims.put("companyRole", membership.getRole().getName());
         claims.put("companyId", membership.getCompany().getId());
         claims.put("companyRoleLevel", membership.getRole().getLevel());
+        claims.put("canViewReports", Boolean.TRUE.equals(membership.getRole().getCanViewReports()) || "CEO".equalsIgnoreCase(membership.getRole().getName()));
 
 
 
@@ -241,6 +248,7 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity ceo = CompanyRoleEntity.builder()
                 .name("CEO")
                 .level(100)
+                .canViewReports(true)
                 .isSystem(true)
                 .company(company)
                 .build();
@@ -248,6 +256,7 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity director = CompanyRoleEntity.builder()
                 .name("Director")
                 .level(80)
+                .canViewReports(true)
                 .isSystem(true)
                 .company(company)
                 .build();
@@ -255,6 +264,7 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity manager = CompanyRoleEntity.builder()
                 .name("Manager")
                 .level(60)
+                .canViewReports(true)
                 .isSystem(true)
                 .company(company)
                 .build();
@@ -262,6 +272,7 @@ public class CompanyServiceImpl implements CompanyService {
         CompanyRoleEntity worker = CompanyRoleEntity.builder()
                 .name("Worker")
                 .level(10)
+                .canViewReports(false)
                 .isSystem(true)
                 .company(company)
                 .build();
@@ -281,7 +292,7 @@ public class CompanyServiceImpl implements CompanyService {
     @Override
     public List<CreateRoleResponse> getAllRoles(Long companyId){
         User currentUser = authService.getCurrentUser();
-        
+
         // Verify membership
         membershipRepository.findByCompanyIdAndUserId(companyId, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("No access to this company"));
@@ -291,7 +302,8 @@ public class CompanyServiceImpl implements CompanyService {
                         role.getId(),
                         role.getName(),
                         role.getLevel(),
-                        role.getIsSystem()
+                        role.getIsSystem(),
+                        role.getCanViewReports()
                 ))
                 .collect(Collectors.toList());
     }
@@ -377,9 +389,10 @@ public class CompanyServiceImpl implements CompanyService {
         
         membershipRepository.save(membership);
         
-        // Always use default password for key encryption
-        // This ensures that key verification works without requiring password input
-        String finalKeyPassword = "defaultPassword123";
+        // Require password for joining? For now use a more secure approach or throw error
+        // since we are moving away from open join anyway. 
+        // If we keep join, we should probably pass a password here too.
+        String finalKeyPassword = "defaultPassword123"; 
         
         // Generate access key for the new member (always with default password)
         org.aldousdev.dockflowbackend.auth.entity.CompanyAccessKey accessKey = 
@@ -426,6 +439,7 @@ public class CompanyServiceImpl implements CompanyService {
         // Update fields
         role.setName(request.getRoleName());
         role.setLevel(request.getRoleLevel());
+        role.setCanViewReports(request.getCanViewReports());
 
         CompanyRoleEntity updatedRole = companyRoleEntityRepository.save(role);
 
@@ -433,7 +447,8 @@ public class CompanyServiceImpl implements CompanyService {
                 updatedRole.getId(),
                 updatedRole.getName(),
                 updatedRole.getLevel(),
-                updatedRole.getIsSystem()
+                updatedRole.getIsSystem(),
+                updatedRole.getCanViewReports()
         );
     }
 
@@ -530,5 +545,119 @@ public class CompanyServiceImpl implements CompanyService {
 
         // 7. Notify the user via WebSocket to refresh their token/context
         workflowEventBroadcaster.broadcastRoleUpdated(userId, newRole.getName(), newRole.getLevel());
+    }
+
+    @Override
+    @Transactional
+    @RequiresRoleLevel(100)
+    public void inviteUser(Long companyId, InviteUserRequest request){
+        User currentUser = authService.getCurrentUser();
+
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Company not found"));
+
+        User invitedUser = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(()-> new ResourceNotFoundException("User not found"));
+
+        if(membershipRepository.findByCompanyIdAndUserId(companyId, invitedUser.getId()).isPresent()){
+            throw new BadRequestException("User is already member of this company");
+        }
+
+        companyInviteTokenRepository.deleteByInvitedEmail(request.getEmail());
+
+        CompanyRoleEntity role = companyRoleEntityRepository.findById(request.getRoleId())
+                .orElseThrow(()-> new ResourceNotFoundException("Role not found"));
+
+        if(!role.getCompany().getId().equals(companyId)){
+            throw new BadRequestException("Role does not belong to this company");
+        }
+
+        if(role.getLevel() >= 100){
+            throw new BadRequestException("Cannot invite user to CEO role");
+        }
+
+        String token = UUID.randomUUID().toString();
+        CompanyInviteToken inviteToken = CompanyInviteToken.builder()
+                .token(token)
+                .invitedBy(currentUser)
+                .company(company)
+                .invitedEmail(request.getEmail())
+                .channel(request.getChannel())
+                .assignedRole(role)
+                .expiresAt(LocalDateTime.now().plusHours(48))
+                .used(false)
+                .build();
+
+        companyInviteTokenRepository.save(inviteToken);
+
+        if(request.getChannel() == InviteChannel.EMAIL){
+            String link = "http://localhost:5173/accept-invite?token="+token;
+            emailService.sendInviteEmail(request.getEmail(),link,company.getName());
+        }
+        else if(request.getChannel() == InviteChannel.TELEGRAM){
+            telegramBindingRepository.findByUserId(invitedUser.getId())
+                    .ifPresentOrElse(binding -> {
+                        if (binding.getTelegramId() != null) {
+                            String link = "http://localhost:5173/accept-invite?token=" + token;
+                            String inviteMsg = String.format(
+                                "📩 Приглашение в компанию %s\n\n" +
+                                "Вас пригласили присоединиться к компании %s на роль %s.\n\n" +
+                                "👉 Принять приглашение:\n%s",
+                                company.getName(), company.getName(), role.getName(), link);
+                            telegramProducer.sendNotification(binding.getTelegramId(), inviteMsg);
+                        } else {
+                            log.warn("User {} has no telegramLink but Telegram channel was selected", request.getEmail());
+                        }
+                    }, () -> log.warn("No telegram binding entry for user {}", request.getEmail()));
+            log.info("Telegram invite for {} - token: {}", request.getEmail(), token);
+        }
+
+        log.info(("Invite sent to {} via {} for company {}"),
+                request.getEmail(), request.getChannel(), companyId);
+    }
+
+    @Override
+    @Transactional
+    public byte[] acceptInvite(AcceptInviteRequest request){
+        CompanyInviteToken inviteToken = companyInviteTokenRepository.findByToken(request.getToken())
+                .orElseThrow(()-> new ResourceNotFoundException("Invite token not found"));
+
+        if(inviteToken.isExpired()){
+            companyInviteTokenRepository.delete(inviteToken);
+            throw new BadRequestException("Invite token expired");
+        }
+
+        if(inviteToken.isUsed()){
+            throw new BadRequestException("Invite token is used");
+        }
+
+//        User user = userRepository.findByEmail(inviteToken.getInvitedEmail())
+//                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        User currentUser = authService.getCurrentUser();
+        if(!currentUser.getEmail().equals(inviteToken.getInvitedEmail())) {
+            throw new BadRequestException("This invite is not for you");
+        }
+
+        User user = currentUser;
+
+        Company company = inviteToken.getCompany();
+        Membership membership = Membership.builder()
+                .company(company)
+                .user(user)
+                .role(inviteToken.getAssignedRole())
+                .build();
+        membershipRepository.save(membership);
+
+        CompanyAccessKey key = digitalSignatureService.generateAccessKey(
+                user,company, request.getKeyPassword()
+        );
+
+        inviteToken.setUsed(true);
+        companyInviteTokenRepository.save(inviteToken);
+
+        log.info("User {} accepted invite to company {}", user.getEmail(), company.getId());
+
+        return digitalSignatureService.createKeyFile(key,request.getKeyPassword());
     }
 }

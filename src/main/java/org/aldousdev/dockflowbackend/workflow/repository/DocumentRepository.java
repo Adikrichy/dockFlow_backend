@@ -16,4 +16,6 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     List<Document> findByUploadedAtBetween(java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
     List<Document> findByUploadedAtAfter(java.time.LocalDateTime date);
     List<Document> findByCompanyIdAndUploadedAtBetween(Long companyId, java.time.LocalDateTime startDate, java.time.LocalDateTime endDate);
+
+    long countByCompanyId(Long companyId);
 }

@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AiResultListener {
 
     private final DocumentAiAnalysisRepository repo;
+    private final org.aldousdev.dockflowbackend.ai.repository.ReportAiAnalysisRepository reportAiRepo;
     private final org.aldousdev.dockflowbackend.chat.service.ChatService chatService;
     private final org.aldousdev.dockflowbackend.auth.repository.UserRepository userRepository;
     private final org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
@@ -99,10 +100,16 @@ public class AiResultListener {
                 handleChatResponse(result);
             } else if ("WORKFLOW_SUGGEST_RESPONSE".equalsIgnoreCase(result.getStatus())) {
                 handleWorkflowSuggestResponse(result);
-            } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null && result.getCorrelationId().startsWith("chat-")) {
-                handleChatError(result);
-            } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null && result.getCorrelationId().startsWith("wf-suggest-")) {
-                handleWorkflowSuggestError(result);
+            } else if ("REPORT_INSIGHTS_RESPONSE".equalsIgnoreCase(result.getStatus())) {
+                handleReportInsightsResponse(result);
+            } else if ("ERROR".equalsIgnoreCase(result.getStatus()) && result.getCorrelationId() != null) {
+                if (result.getCorrelationId().startsWith("chat-")) {
+                    handleChatError(result);
+                } else if (result.getCorrelationId().startsWith("wf-suggest-")) {
+                    handleWorkflowSuggestError(result);
+                } else if (result.getCorrelationId().startsWith("report-")) {
+                    handleReportError(result);
+                }
             } else {
                 // Ignore "PROCESSING" status for records we don't track in DocumentAiAnalysis (like general chat)
                 if (!"PROCESSING".equalsIgnoreCase(result.getStatus())) {
@@ -110,6 +117,40 @@ public class AiResultListener {
                 }
             }
         });
+    }
+
+    private void handleReportInsightsResponse(AiResultDto result) {
+        try {
+            log.info("Handling REPORT_INSIGHTS_RESPONSE for correlation_id={}", result.getCorrelationId());
+            String correlationId = result.getCorrelationId();
+            
+            reportAiRepo.findByCorrelationId(correlationId).ifPresent(entity -> {
+                java.util.Map<String, Object> data = result.getResult();
+                if (data != null && data.get("insights") != null) {
+                    entity.setInsights(data.get("insights").toString());
+                    entity.setStatus("SUCCESS");
+                    reportAiRepo.save(entity);
+                    log.info("Report AI insights saved: correlation_id={}", correlationId);
+                } else {
+                    log.warn("Report AI result has no 'insights' payload for correlation_id={}", correlationId);
+                }
+            });
+        } catch (Exception e) {
+            log.error("Failed to process REPORT_INSIGHTS_RESPONSE", e);
+        }
+    }
+
+    private void handleReportError(AiResultDto result) {
+        try {
+            log.info("Handling REPORT ERROR for correlation_id={}", result.getCorrelationId());
+            reportAiRepo.findByCorrelationId(result.getCorrelationId()).ifPresent(entity -> {
+                entity.setStatus("ERROR");
+                entity.setInsights("System Error: AI service failed to provide insights.");
+                reportAiRepo.save(entity);
+            });
+        } catch (Exception e) {
+            log.error("Failed to process REPORT ERROR", e);
+        }
     }
 
     private void handleChatError(AiResultDto result) {

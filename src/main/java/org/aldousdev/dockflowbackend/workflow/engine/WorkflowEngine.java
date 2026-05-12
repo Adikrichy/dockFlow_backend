@@ -168,7 +168,7 @@ public class WorkflowEngine {
             return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
         } catch (Exception e) {
             log.warn("Failed to serialize step assignments", e);
-            return null;
+            return "{}";
         }
     }
 

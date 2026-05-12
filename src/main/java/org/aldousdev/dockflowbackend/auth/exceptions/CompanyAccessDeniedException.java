@@ -9,3 +9,4 @@ public class CompanyAccessDeniedException extends RuntimeException {
         super(message, cause);
     }
 }
+

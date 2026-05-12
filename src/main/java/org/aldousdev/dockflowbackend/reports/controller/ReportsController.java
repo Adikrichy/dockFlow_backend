@@ -1,5 +1,6 @@
 package org.aldousdev.dockflowbackend.reports.controller;
 
+import lombok.extern.slf4j.Slf4j;
 import org.aldousdev.dockflowbackend.auth.entity.User;
 import org.aldousdev.dockflowbackend.reports.dto.ReportDataDTO;
 import org.aldousdev.dockflowbackend.reports.dto.ReportFiltersDTO;
@@ -17,6 +18,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import org.aldousdev.dockflowbackend.ai.entity.ReportAiAnalysis;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "Reports", description = "Reports management API")
 @CrossOrigin(origins = "*", maxAge = 3600)
+@Slf4j
 public class ReportsController {
 
     private final ReportsService reportsService;
@@ -53,23 +56,45 @@ public class ReportsController {
     // For this specific task, we'll verify access if company is provided.
 
     private Long resolveCompanyId(Authentication authentication, String companyParam) {
-        if (companyParam != null) {
+        if (companyParam != null && !companyParam.isEmpty()) {
             try {
                 Long companyId = Long.parseLong(companyParam);
                 checkCompanyAccess(authentication.getName(), companyId);
                 return companyId;
             } catch (NumberFormatException e) {
-                // validation error
-                throw new RuntimeException("Invalid company ID format");
+                log.warn("Invalid company ID format: {}", companyParam);
+                return null;
+            } catch (Exception e) {
+                log.warn("Access check failed for company {}: {}", companyParam, e.getMessage());
+                return null;
             }
         }
         
-        // Extract from JWT
-        if (authentication instanceof org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken jwtAuth) {
-             return jwtService.extractCompanyId(jwtAuth.getToken());
+        // Extract from JWT if possible, but don't throw if not found
+        try {
+            if (authentication instanceof org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken jwtAuth) {
+                 Long companyId = jwtService.extractCompanyId(jwtAuth.getToken());
+                 return (companyId != null && companyId > 0) ? companyId : null;
+            }
+            
+            // Fallback for other authentication types if needed
+            if (authentication != null && authentication.getPrincipal() instanceof User userDetails) {
+                // If the user entity is directly in principal (might happen in some flows)
+                // we'd need to fetch their company from DB or membership.
+                // For now, we rely on JWT/Param.
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract company from JWT: {}", e.getMessage());
         }
         
-        throw new RuntimeException("Company context not found");
+        return null;
+    }
+
+    private String getTokenFromRequest(Authentication authentication) {
+        if (authentication instanceof org.aldousdev.dockflowbackend.auth.security.JwtAuthenticationToken jwtAuth) {
+            return jwtAuth.getToken();
+        }
+        return null;
     }
 
     @GetMapping("/summary")
@@ -83,13 +108,20 @@ public class ReportsController {
         
         Long companyId = resolveCompanyId(authentication, company);
         
+        // Check for advanced permission
+        String token = getTokenFromRequest(authentication);
+        boolean canViewAll = token != null && (jwtService.extractCanViewReports(token) || jwtService.extractCompanyRoleLevel(token) >= 100);
+        
+        User currentUser = userRepository.findByEmail(authentication.getName()).orElseThrow();
+        Long userIdToFilter = canViewAll ? null : currentUser.getId();
+
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
         filters.setTeam(team);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         filters.setTag(tag);
 
-        ReportDataDTO reportData = reportsService.getReportSummary(filters);
+        ReportDataDTO reportData = reportsService.getReportSummary(filters, userIdToFilter);
         return ResponseEntity.ok(reportData);
     }
 
@@ -101,12 +133,16 @@ public class ReportsController {
             @RequestParam(required = false) String company) {
         
         Long companyId = resolveCompanyId(authentication, company);
+        String token = getTokenFromRequest(authentication);
+        boolean canViewAll = token != null && (jwtService.extractCanViewReports(token) || jwtService.extractCompanyRoleLevel(token) >= 100);
+        User currentUser = userRepository.findByEmail(authentication.getName()).orElseThrow();
+        Long userIdToFilter = canViewAll ? null : currentUser.getId();
         
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         
-        List<Map<String, Object>> weeklyData = reportsService.getWeeklyActivity(filters);
+        List<Map<String, Object>> weeklyData = reportsService.getWeeklyActivity(filters, userIdToFilter);
         return ResponseEntity.ok(weeklyData);
     }
 
@@ -118,12 +154,16 @@ public class ReportsController {
             @RequestParam(required = false) String company) {
         
         Long companyId = resolveCompanyId(authentication, company);
+        String token = getTokenFromRequest(authentication);
+        boolean canViewAll = token != null && (jwtService.extractCanViewReports(token) || jwtService.extractCompanyRoleLevel(token) >= 100);
+        User currentUser = userRepository.findByEmail(authentication.getName()).orElseThrow();
+        Long userIdToFilter = canViewAll ? null : currentUser.getId();
         
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         
-        List<Map<String, Object>> userActivity = reportsService.getUserActivity(filters);
+        List<Map<String, Object>> userActivity = reportsService.getUserActivity(filters, userIdToFilter);
         return ResponseEntity.ok(userActivity);
     }
 
@@ -135,12 +175,16 @@ public class ReportsController {
             @RequestParam(required = false) String company) {
         
         Long companyId = resolveCompanyId(authentication, company);
+        String token = getTokenFromRequest(authentication);
+        boolean canViewAll = token != null && (jwtService.extractCanViewReports(token) || jwtService.extractCompanyRoleLevel(token) >= 100);
+        User currentUser = userRepository.findByEmail(authentication.getName()).orElseThrow();
+        Long userIdToFilter = canViewAll ? null : currentUser.getId();
         
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         
-        List<Map<String, Object>> documentTypes = reportsService.getDocumentTypes(filters);
+        List<Map<String, Object>> documentTypes = reportsService.getDocumentTypes(filters, userIdToFilter);
         return ResponseEntity.ok(documentTypes);
     }
 
@@ -155,14 +199,18 @@ public class ReportsController {
             @RequestParam(required = false) String tag) {
 
         Long companyId = resolveCompanyId(authentication, company);
+        String token = getTokenFromRequest(authentication);
+        boolean canViewAll = token != null && (jwtService.extractCanViewReports(token) || jwtService.extractCompanyRoleLevel(token) >= 100);
+        User currentUser = userRepository.findByEmail(authentication.getName()).orElseThrow();
+        Long userIdToFilter = canViewAll ? null : currentUser.getId();
 
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange);
         filters.setTeam(team);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         filters.setTag(tag);
 
-        ByteArrayResource resource = reportsService.exportReport(filters, format);
+        ByteArrayResource resource = reportsService.exportReport(filters, format, userIdToFilter);
         
         String filename = "report_" + LocalDateTime.now().toString().substring(0, 10) + "." + format;
         
@@ -190,7 +238,7 @@ public class ReportsController {
         ReportFiltersDTO filters = new ReportFiltersDTO();
         filters.setTimeRange(timeRange != null ? timeRange : "thisWeek");
         filters.setTeam(team);
-        filters.setCompany(String.valueOf(companyId));
+        filters.setCompany(companyId != null ? String.valueOf(companyId) : null);
         filters.setTag(tag);
         
         String reportId = reportsService.saveReport(name, filters);
@@ -241,5 +289,23 @@ public class ReportsController {
         reportsService.updateRolePermissions(roleId, companyId, canView);
         
         return ResponseEntity.ok(Map.of("message", "Permissions updated successfully"));
+    }
+
+    @GetMapping("/ai-insights")
+    @Operation(summary = "Get AI-generated insights for report data")
+    public ResponseEntity<ReportAiAnalysis> getAiInsights(
+            @RequestParam String timeRange,
+            @RequestParam(required = false) Long companyId,
+            Authentication authentication) {
+        
+        Long resolvedCompanyId = resolveCompanyId(authentication, companyId != null ? companyId.toString() : null);
+        
+        if (resolvedCompanyId == null) {
+            log.warn("Unauthorized access attempt for AI insights (company={})", companyId);
+            return ResponseEntity.status(403).build();
+        }
+        
+        ReportAiAnalysis analysis = reportsService.getAiInsights(resolvedCompanyId, timeRange);
+        return ResponseEntity.ok(analysis);
     }
 }

@@ -177,7 +177,7 @@ public class JWTService {
 
             if(role == null){
                 log.warn("CompanyRoleLevel is null");
-                return null;
+                return -1;
             }
 
             if(role instanceof Integer){
@@ -199,12 +199,12 @@ public class JWTService {
                 }
                 catch(NumberFormatException e){
                    log.error("Can not Parsing String {}", role);
-                   return null;
+                   return -1;
                 }
             }
 
             log.error("Unexpected type: {}", role.getClass().getName());
-            return null;
+            return -1;
         });
 
         log.info("Final result: {}", result);
@@ -215,21 +215,30 @@ public class JWTService {
     public Long extractCompanyId(String token){
         return extractClaim(token, claims -> {
             Object id = claims.get("companyId");
-            if (id == null) return null;
+            if (id == null) return -1L;
             if (id instanceof Number) return ((Number) id).longValue();
-            return null;
+            return -1L;
+        });
+    }
+
+    public Boolean extractCanViewReports(String token) {
+        return extractClaim(token, claims -> {
+            Object val = claims.get("canViewReports");
+            if (val instanceof Boolean) return (Boolean) val;
+            if (val instanceof String) return Boolean.parseBoolean((String) val);
+            return false;
         });
     }
 
     public Long extractCompanyIdFromAuth(Authentication authentication){
         if(authentication == null || !authentication.isAuthenticated()){
-            return null;
+            throw new IllegalArgumentException("Authentication is null or not authenticated");
         }
 
         if(authentication.getPrincipal() instanceof String token){
             return extractCompanyId(token);
         }
-        return null;
+        throw new IllegalArgumentException("Invalid authentication principal");
     }
 
 }

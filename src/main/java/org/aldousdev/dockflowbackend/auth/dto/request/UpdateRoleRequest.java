@@ -14,4 +14,6 @@ public class UpdateRoleRequest {
     @NotNull
     @Min(10) @Max(100)
     private Integer roleLevel;
+    
+    private Boolean canViewReports;
 }
